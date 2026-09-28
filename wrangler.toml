@@ -1,4 +1,4 @@
-name = "mm2d-auto-sync"
+name = "mm2d-ai"
 main = "src/worker/index.ts"
 compatibility_date = "2026-08-01"
 
