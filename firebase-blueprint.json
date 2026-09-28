@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "VerifiedMarketRecord": {
+      "title": "VerifiedMarketRecord",
+      "description": "Clean, mathematically verified Myanmar 2D market record for a specific session",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique composite identifier: date_time_historyId"
+        },
+        "date": {
+          "type": "string",
+          "description": "ISO format date YYYY-MM-DD"
+        },
+        "time": {
+          "type": "string",
+          "description": "Record timestamp HH:MM:SS"
+        },
+        "session": {
+          "type": "string",
+          "enum": ["AM", "PM"]
+        },
+        "setRaw": {
+          "type": "string",
+          "description": "Raw SET index value"
+        },
+        "valueRaw": {
+          "type": "string",
+          "description": "Raw total value"
+        },
+        "twod": {
+          "type": "string",
+          "description": "Derived 2D number (2 digits)"
+        },
+        "historyId": {
+          "type": "string",
+          "description": "Upstream unique history ID"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of ingestion"
+        }
+      },
+      "required": ["id", "date", "time", "session", "setRaw", "valueRaw", "twod", "historyId", "createdAt"]
+    },
+    "SyncCheckpoint": {
+      "title": "SyncCheckpoint",
+      "description": "Checkpoint tracking dual synchronization state",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "LIVE_SYNC_CHECKPOINT or HISTORICAL_BACKFILL_CHECKPOINT"
+        },
+        "lastDate": {
+          "type": "string"
+        },
+        "lastTime": {
+          "type": "string"
+        },
+        "historyId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "lastDate", "status", "updatedAt"]
+    },
+    "SyncAuditLog": {
+      "title": "SyncAuditLog",
+      "description": "Audit trail log for synchronization cycles",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["SUCCESS", "WARNING", "ERROR", "INFO"]
+        },
+        "date": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "timestamp", "stage", "status", "message"]
+    }
+  },
+  "firestore": {
+    "/verified_market_records/{recordId}": {
+      "schema": "VerifiedMarketRecord",
+      "description": "Collection of verified 2D market records"
+    },
+    "/sync_checkpoints/{checkpointId}": {
+      "schema": "SyncCheckpoint",
+      "description": "Dual checkpoints for live synchronization and historical backfill"
+    },
+    "/sync_audit_logs/{logId}": {
+      "schema": "SyncAuditLog",
+      "description": "System audit logs for dataset operations"
+    }
+  }
+}

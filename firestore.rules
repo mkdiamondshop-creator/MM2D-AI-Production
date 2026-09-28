@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.:]+$');
+    }
+
+    // Public / Authenticated read for verified market dataset
+    match /verified_market_records/{recordId} {
+      allow get, list: if isValidId(recordId);
+      allow write: if false; // Server / Admin writes only
+    }
+
+    // Sync checkpoints
+    match /sync_checkpoints/{checkpointId} {
+      allow get, list: if isValidId(checkpointId);
+      allow write: if false; // Server / Admin writes only
+    }
+
+    // Audit logs
+    match /sync_audit_logs/{logId} {
+      allow get, list: if isValidId(logId);
+      allow write: if false; // Server / Admin writes only
+    }
+  }
+}

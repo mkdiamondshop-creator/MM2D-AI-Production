@@ -1,0 +1,6 @@
+{
+  "name": "MM2D",
+  "description": "Myanmar 2D market data analysis, historical dataset verification, and evidence-based prediction system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

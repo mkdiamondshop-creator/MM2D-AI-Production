@@ -1,0 +1,11 @@
+name = "mm2d-auto-sync"
+main = "src/worker/index.ts"
+compatibility_date = "2026-08-01"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mm2d-production-db"
+database_id = "90c35a0d-dcd3-48fd-90d4-11a73a0c2331"
