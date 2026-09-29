@@ -545,20 +545,55 @@ export class AutoWeightedV2Engine {
       ];
     }
 
-    // Sanitize liveFeed: zero live 2D, enforce within [Open, Lock] window, chronological sort
+    // Sanitize liveFeed: zero live 2D, enforce within [Open, Lock] window, strictly numeric, chronological sort
     const sessionOpen = session === 'AM' ? '10:00:00' : '14:00:00';
-    const sanitizedLiveFeed = liveFeed
-      .filter((obs) => obs.time >= sessionOpen && obs.time <= cutoffTime)
-      .map((obs) => {
-        const s = typeof obs.set === 'number' ? obs.set : parseFloat(String(obs.set).replace(/,/g, ''));
-        const v = typeof obs.value === 'number' ? obs.value : parseFloat(String(obs.value).replace(/,/g, ''));
-        return {
-          time: obs.time,
-          set: isNaN(s) ? obs.set : s,
-          value: isNaN(v) ? obs.value : v,
-        };
-      })
-      .sort((a, b) => a.time.localeCompare(b.time));
+    const sanitizedLiveFeed: Array<{ time: string; set: number; value: number }> = [];
+
+    for (const obs of liveFeed) {
+      if (!obs || !obs.time || obs.time < sessionOpen || obs.time > cutoffTime) continue;
+
+      const rawSetStr = String(obs.set ?? '').trim();
+      const rawValStr = String(obs.value ?? '').trim();
+      const lowerSet = rawSetStr.toLowerCase();
+      const lowerVal = rawValStr.toLowerCase();
+
+      if (
+        lowerSet === 'set' ||
+        lowerVal === 'value' ||
+        lowerSet === 'nan' ||
+        lowerVal === 'nan' ||
+        lowerSet === 'null' ||
+        lowerVal === 'undefined' ||
+        rawSetStr === '--' ||
+        rawValStr === '--' ||
+        rawSetStr === '0.00' ||
+        rawValStr === '0.00' ||
+        rawSetStr === '0'
+      ) {
+        continue;
+      }
+
+      const s = typeof obs.set === 'number' ? obs.set : parseFloat(rawSetStr.replace(/,/g, ''));
+      const v = typeof obs.value === 'number' ? obs.value : parseFloat(rawValStr.replace(/,/g, ''));
+
+      if (
+        !Number.isFinite(s) ||
+        !Number.isFinite(v) ||
+        s < 100 ||
+        s > 5000 ||
+        v < 100
+      ) {
+        continue;
+      }
+
+      sanitizedLiveFeed.push({
+        time: obs.time,
+        set: s,
+        value: v,
+      });
+    }
+
+    sanitizedLiveFeed.sort((a, b) => a.time.localeCompare(b.time));
 
     // 1. Build out-of-sample historical evaluations strictly before targetDate for this session
     // (Historical evaluations use only prior dates and are completely untouched by today's live feed)

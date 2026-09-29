@@ -132,14 +132,31 @@ export class ThaiStock2dSource implements ILiveMarketSource {
         };
       }
 
-      const rawSet = String(liveObj.set || '').trim();
-      const rawValue = String(liveObj.value || '').trim();
-      const rawTime = String(liveObj.time || '').trim();
+      const rawSet = String(liveObj.set ?? '').trim();
+      const rawValue = String(liveObj.value ?? '').trim();
+      const rawTime = String(liveObj.time ?? '').trim();
 
-      // Strict Zero-Fabrication check: Reject placeholder or empty values
-      if (!rawSet || !rawValue || rawSet === '--' || rawValue === '--' || rawSet === '0.00' || rawValue === '0.00') {
+      // Strict Zero-Fabrication check: Reject literal field names ("set", "value"), placeholders, empty, or non-numeric values
+      const lowerSet = rawSet.toLowerCase();
+      const lowerVal = rawValue.toLowerCase();
+      if (
+        !rawSet ||
+        !rawValue ||
+        rawSet === '--' ||
+        rawValue === '--' ||
+        rawSet === '0.00' ||
+        rawValue === '0.00' ||
+        lowerSet === 'set' ||
+        lowerVal === 'value' ||
+        lowerSet === 'nan' ||
+        lowerVal === 'nan' ||
+        lowerSet === 'null' ||
+        lowerVal === 'null' ||
+        lowerSet === 'undefined' ||
+        lowerVal === 'undefined'
+      ) {
         attemptLog.status = 'INSUFFICIENT_DATA';
-        attemptLog.error = `Live market not active or returning placeholders: set="${rawSet}", value="${rawValue}"`;
+        attemptLog.error = `Invalid literal, placeholder, or empty SET/Value received: set="${rawSet}", value="${rawValue}"`;
         return {
           success: false,
           status: 'INSUFFICIENT_LIVE_DATA',
@@ -155,8 +172,16 @@ export class ThaiStock2dSource implements ILiveMarketSource {
       const setNumeric = parseFloat(cleanSet);
       const valueNumeric = parseFloat(cleanVal);
 
-      // Validate numeric sanity (SET index >= 100, Market Value >= 100)
-      if (isNaN(setNumeric) || isNaN(valueNumeric) || setNumeric < 100.0 || valueNumeric < 100.0) {
+      // Validate numeric sanity (SET index between 100 and 5000, Market Value >= 100)
+      if (
+        isNaN(setNumeric) ||
+        isNaN(valueNumeric) ||
+        !Number.isFinite(setNumeric) ||
+        !Number.isFinite(valueNumeric) ||
+        setNumeric < 100.0 ||
+        setNumeric > 5000.0 ||
+        valueNumeric < 100.0
+      ) {
         attemptLog.status = 'SCHEMA_ERROR';
         attemptLog.error = `Invalid numeric SET/Value received: set=${setNumeric}, value=${valueNumeric}`;
         return {
@@ -170,8 +195,8 @@ export class ThaiStock2dSource implements ILiveMarketSource {
       }
 
       // Parse provider timestamp:
-      // Provider live.time and live.date are emitted in Asia/Yangon / MMT (UTC+6:30).
-      // Normalize provider timestamp to canonical Bangkok market time (Asia/Bangkok, UTC+7:00)
+      // Stock Exchange of Thailand (SET) live market feed emits timestamps in canonical Bangkok time (Asia/Bangkok, UTC+7:00).
+      // Normalize provider timestamp to canonical Bangkok market time (Asia/Bangkok, UTC+7:00) using TimezoneContract
       // before freshness, date mismatch, or session comparisons.
       let bkkNormalized: { dateStr: string; timeStr: string; isoString: string };
 
@@ -205,11 +230,11 @@ export class ThaiStock2dSource implements ILiveMarketSource {
         }
 
         if (!providerDateStr) {
-          providerDateStr = targetDate || TimezoneContract.toYangon(Date.now()).dateStr;
+          providerDateStr = targetDate || TimezoneContract.toBangkok(Date.now()).dateStr;
         }
 
-        const yangonIso = `${providerDateStr}T${providerTimeStr}+06:30`;
-        bkkNormalized = TimezoneContract.toBangkok(yangonIso);
+        const bkkIso = `${providerDateStr}T${providerTimeStr}+07:00`;
+        bkkNormalized = TimezoneContract.toBangkok(bkkIso);
       }
 
       const dateStr = bkkNormalized.dateStr;

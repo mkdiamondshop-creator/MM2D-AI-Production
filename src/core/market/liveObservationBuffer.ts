@@ -70,15 +70,41 @@ export class LiveObservationBuffer {
     }
 
     // 3. Numeric SET check
-    const numericSet = typeof raw.set === 'number' ? raw.set : parseFloat(String(raw.set).replace(/,/g, ''));
-    if (!Number.isFinite(numericSet) || numericSet <= 0 || numericSet > 5000) {
-      return { isValid: false, reason: `Invalid SET index '${raw.set}' (must be positive finite number <= 5000)` };
+    const rawSetStr = typeof raw.set === 'string' ? raw.set.trim() : String(raw.set ?? '').trim();
+    const lowerSet = rawSetStr.toLowerCase();
+    if (
+      lowerSet === 'set' ||
+      lowerSet === 'nan' ||
+      lowerSet === 'null' ||
+      lowerSet === 'undefined' ||
+      rawSetStr === '--' ||
+      rawSetStr === '0.00' ||
+      rawSetStr === '0'
+    ) {
+      return { isValid: false, reason: `Invalid literal or placeholder SET '${raw.set}'` };
+    }
+    const numericSet = typeof raw.set === 'number' ? raw.set : parseFloat(rawSetStr.replace(/,/g, ''));
+    if (!Number.isFinite(numericSet) || numericSet < 100 || numericSet > 5000) {
+      return { isValid: false, reason: `Invalid SET index '${raw.set}' (must be finite number between 100 and 5000)` };
     }
 
     // 4. Numeric Value check
-    const numericValue = typeof raw.value === 'number' ? raw.value : parseFloat(String(raw.value).replace(/,/g, ''));
-    if (!Number.isFinite(numericValue) || numericValue <= 0) {
-      return { isValid: false, reason: `Invalid Market Value '${raw.value}' (must be positive finite number)` };
+    const rawValStr = typeof raw.value === 'string' ? raw.value.trim() : String(raw.value ?? '').trim();
+    const lowerVal = rawValStr.toLowerCase();
+    if (
+      lowerVal === 'value' ||
+      lowerVal === 'nan' ||
+      lowerVal === 'null' ||
+      lowerVal === 'undefined' ||
+      rawValStr === '--' ||
+      rawValStr === '0.00' ||
+      rawValStr === '0'
+    ) {
+      return { isValid: false, reason: `Invalid literal or placeholder Market Value '${raw.value}'` };
+    }
+    const numericValue = typeof raw.value === 'number' ? raw.value : parseFloat(rawValStr.replace(/,/g, ''));
+    if (!Number.isFinite(numericValue) || numericValue < 100) {
+      return { isValid: false, reason: `Invalid Market Value '${raw.value}' (must be positive finite number >= 100)` };
     }
 
     // 5. Determine Session

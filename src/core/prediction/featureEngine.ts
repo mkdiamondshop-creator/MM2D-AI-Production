@@ -77,10 +77,39 @@ export class FeatureEngine {
         }
       }
 
-      const setNum = typeof raw.set === 'number' ? raw.set : parseFloat(String(raw.set).replace(/,/g, ''));
-      const valNum = typeof raw.value === 'number' ? raw.value : parseFloat(String(raw.value).replace(/,/g, ''));
+      const rawSetStr = String(raw.set ?? '').trim();
+      const rawValStr = String(raw.value ?? '').trim();
+      const lowerSet = rawSetStr.toLowerCase();
+      const lowerVal = rawValStr.toLowerCase();
 
-      if (isNaN(setNum) || isNaN(valNum) || setNum <= 0 || valNum <= 0) {
+      if (
+        lowerSet === 'set' ||
+        lowerVal === 'value' ||
+        lowerSet === 'nan' ||
+        lowerVal === 'nan' ||
+        lowerSet === 'null' ||
+        lowerVal === 'undefined' ||
+        rawSetStr === '--' ||
+        rawValStr === '--' ||
+        rawSetStr === '0.00' ||
+        rawValStr === '0.00' ||
+        rawSetStr === '0'
+      ) {
+        continue;
+      }
+
+      const setNum = typeof raw.set === 'number' ? raw.set : parseFloat(rawSetStr.replace(/,/g, ''));
+      const valNum = typeof raw.value === 'number' ? raw.value : parseFloat(rawValStr.replace(/,/g, ''));
+
+      if (
+        isNaN(setNum) ||
+        isNaN(valNum) ||
+        !Number.isFinite(setNum) ||
+        !Number.isFinite(valNum) ||
+        setNum < 100 ||
+        setNum > 5000 ||
+        valNum < 100
+      ) {
         continue;
       }
 

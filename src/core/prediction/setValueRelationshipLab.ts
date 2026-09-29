@@ -192,17 +192,48 @@ export function resolveTargetPreLockObservation(
   liveFeed?: Array<{ time: string; set: number | string; value: number | string }>
 ): { set: number | null; value: number | null; time: string } {
   if (liveFeed && liveFeed.length > 0) {
-    const latest = liveFeed[liveFeed.length - 1];
-    const s = typeof latest.set === 'number' ? latest.set : parseFloat(String(latest.set).replace(/,/g, ''));
-    const v = typeof latest.value === 'number' ? latest.value : parseFloat(String(latest.value).replace(/,/g, ''));
-    if (!isNaN(s) && !isNaN(v)) {
-      return { set: s, value: v, time: latest.time };
+    for (let i = liveFeed.length - 1; i >= 0; i--) {
+      const obs = liveFeed[i];
+      if (!obs) continue;
+      const rawSetStr = String(obs.set ?? '').trim();
+      const rawValStr = String(obs.value ?? '').trim();
+      const lowerSet = rawSetStr.toLowerCase();
+      const lowerVal = rawValStr.toLowerCase();
+
+      if (
+        lowerSet === 'set' ||
+        lowerVal === 'value' ||
+        lowerSet === 'nan' ||
+        lowerVal === 'nan' ||
+        lowerSet === 'null' ||
+        lowerVal === 'undefined' ||
+        rawSetStr === '--' ||
+        rawValStr === '--' ||
+        rawSetStr === '0.00' ||
+        rawValStr === '0.00' ||
+        rawSetStr === '0'
+      ) {
+        continue;
+      }
+
+      const s = typeof obs.set === 'number' ? obs.set : parseFloat(rawSetStr.replace(/,/g, ''));
+      const v = typeof obs.value === 'number' ? obs.value : parseFloat(rawValStr.replace(/,/g, ''));
+
+      if (Number.isFinite(s) && s >= 100 && s <= 5000 && Number.isFinite(v) && v >= 100) {
+        return { set: s, value: v, time: obs.time };
+      }
     }
   }
 
   const checkTime = session === 'AM' ? '11:00:00' : '15:00:00';
   const match = allRecords.find((r) => r.date === targetDate && r.time === checkTime);
-  if (match && match.setNumeric && match.valueNumeric) {
+  if (
+    match &&
+    Number.isFinite(match.setNumeric) &&
+    match.setNumeric >= 100 &&
+    Number.isFinite(match.valueNumeric) &&
+    match.valueNumeric >= 100
+  ) {
     return { set: match.setNumeric, value: match.valueNumeric, time: match.time };
   }
 

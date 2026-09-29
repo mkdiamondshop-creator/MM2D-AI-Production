@@ -644,6 +644,41 @@ export class D1StorageAdapter {
     value: number;
     timestamp: string;
   }): Promise<{ inserted: boolean; duplicate: boolean }> {
+    // Strict numeric enforcement: Reject literal field names ("set", "value"), NaN, or placeholders
+    const rawSetStr = String(obs.set ?? '').trim();
+    const rawValStr = String(obs.value ?? '').trim();
+    const lowerSet = rawSetStr.toLowerCase();
+    const lowerVal = rawValStr.toLowerCase();
+
+    if (
+      lowerSet === 'set' ||
+      lowerVal === 'value' ||
+      lowerSet === 'nan' ||
+      lowerVal === 'nan' ||
+      lowerSet === 'null' ||
+      lowerSet === 'undefined' ||
+      rawSetStr === '--' ||
+      rawValStr === '--' ||
+      rawSetStr === '0.00' ||
+      rawValStr === '0.00' ||
+      rawSetStr === '0'
+    ) {
+      throw new Error(`Cannot store invalid literal or placeholder live observation: set=${obs.set}, value=${obs.value}`);
+    }
+
+    const numericSet = typeof obs.set === 'number' ? obs.set : parseFloat(rawSetStr.replace(/,/g, ''));
+    const numericValue = typeof obs.value === 'number' ? obs.value : parseFloat(rawValStr.replace(/,/g, ''));
+
+    if (
+      !Number.isFinite(numericSet) ||
+      numericSet < 100 ||
+      numericSet > 5000 ||
+      !Number.isFinite(numericValue) ||
+      numericValue < 100
+    ) {
+      throw new Error(`Cannot store invalid non-numeric live observation: set=${obs.set}, value=${obs.value}`);
+    }
+
     const id = `live_${obs.date}_${obs.session}_${obs.time}`;
 
     const existing = await this.db.prepare(
@@ -651,12 +686,12 @@ export class D1StorageAdapter {
     ).bind(id).first<{ id: string; set_numeric: number; value_numeric: number }>();
 
     if (existing) {
-      if (Number(existing.set_numeric) === obs.set && Number(existing.value_numeric) === obs.value) {
+      if (Number(existing.set_numeric) === numericSet && Number(existing.value_numeric) === numericValue) {
         return { inserted: false, duplicate: true };
       }
       await this.db.prepare(
         'UPDATE live_observations SET set_numeric = ?, value_numeric = ?, timestamp = ? WHERE id = ?'
-      ).bind(obs.set, obs.value, obs.timestamp, id).run();
+      ).bind(numericSet, numericValue, obs.timestamp, id).run();
       return { inserted: true, duplicate: false };
     }
 
@@ -669,8 +704,8 @@ export class D1StorageAdapter {
       obs.date,
       obs.time,
       obs.session,
-      obs.set,
-      obs.value,
+      numericSet,
+      numericValue,
       obs.timestamp
     ).run();
 
@@ -683,6 +718,7 @@ export class D1StorageAdapter {
    * 1. Strictly isolated by session (AM or PM).
    * 2. Sorted chronologically (date ASC, time ASC).
    * 3. Contains ZERO live 2D.
+   * 4. Treats any rows with literal field names ('set', 'value') or invalid non-numeric data as invalid historical collector records and excludes them.
    */
   public async queryLiveObservations(options?: {
     date?: string;
@@ -733,15 +769,55 @@ export class D1StorageAdapter {
 
     if (!results || !Array.isArray(results)) return [];
 
-    return results.map((row) => ({
-      id: String(row.id),
-      date: String(row.date),
-      time: String(row.time),
-      session: row.session as MarketSession,
-      set: Number(row.set_numeric),
-      value: Number(row.value_numeric),
-      timestamp: String(row.timestamp),
-    }));
+    const validRecords: D1LiveObservationRecord[] = [];
+    for (const row of results) {
+      const rawSetStr = String(row.set_numeric ?? '').trim();
+      const rawValStr = String(row.value_numeric ?? '').trim();
+      const lowerSet = rawSetStr.toLowerCase();
+      const lowerVal = rawValStr.toLowerCase();
+
+      // Treat any existing invalid rows with literal field names ("set", "value"), NaN, or placeholders as invalid historical collector records
+      if (
+        lowerSet === 'set' ||
+        lowerVal === 'value' ||
+        lowerSet === 'nan' ||
+        lowerVal === 'nan' ||
+        lowerSet === 'null' ||
+        lowerVal === 'undefined' ||
+        rawSetStr === '--' ||
+        rawValStr === '--' ||
+        rawSetStr === '0.00' ||
+        rawValStr === '0.00' ||
+        rawSetStr === '0'
+      ) {
+        continue;
+      }
+
+      const setNum = typeof row.set_numeric === 'number' ? row.set_numeric : parseFloat(rawSetStr.replace(/,/g, ''));
+      const valNum = typeof row.value_numeric === 'number' ? row.value_numeric : parseFloat(rawValStr.replace(/,/g, ''));
+
+      if (
+        !Number.isFinite(setNum) ||
+        setNum < 100 ||
+        setNum > 5000 ||
+        !Number.isFinite(valNum) ||
+        valNum < 100
+      ) {
+        continue;
+      }
+
+      validRecords.push({
+        id: String(row.id),
+        date: String(row.date),
+        time: String(row.time),
+        session: row.session as MarketSession,
+        set: setNum,
+        value: valNum,
+        timestamp: String(row.timestamp),
+      });
+    }
+
+    return validRecords;
   }
 
   /**

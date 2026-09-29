@@ -161,7 +161,17 @@ export class ServerSideV2Coordinator {
       }
 
       // 3. Query stored live observations from D1 (Zero Live 2D)
-      const observations = await d1.queryLiveObservations({ date: targetDate, session });
+      const rawObservations = await d1.queryLiveObservations({ date: targetDate, session });
+      // Strictly filter out any corrupted or literal field name records, treating them as invalid historical collector records
+      const observations = (rawObservations || []).filter((o) =>
+        Number.isFinite(o.set) &&
+        o.set >= 100 &&
+        o.set <= 5000 &&
+        Number.isFinite(o.value) &&
+        o.value >= 100 &&
+        String(o.set).toLowerCase() !== 'set' &&
+        String(o.value).toLowerCase() !== 'value'
+      );
       if (!observations || observations.length === 0) {
         return {
           success: false,
