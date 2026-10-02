@@ -195,14 +195,31 @@ export async function executeSyncCycle(env: Env, targetDate?: string): Promise<{
 }
 
 /**
+ * Parses numeric SET or Value metric from ThaiStock2D live feed.
+ * Strips commas, handles numbers/strings, and rejects non-numeric/placeholders.
+ */
+export function parseNumericLiveMetric(val: string | number | null | undefined): number {
+  if (val === null || val === undefined) return NaN;
+  if (typeof val === 'number') return Number.isFinite(val) ? val : NaN;
+  const cleaned = String(val).trim().replace(/,/g, '');
+  if (!cleaned || cleaned === '--' || cleaned === '0.00') return NaN;
+  const lower = cleaned.toLowerCase();
+  if (lower === 'set' || lower === 'value' || lower === 'nan' || lower === 'null' || lower === 'undefined') return NaN;
+  const num = parseFloat(cleaned);
+  return Number.isFinite(num) ? num : NaN;
+}
+
+/**
  * Server-Side Live Collector Cycle
  * Invariants:
  * 1. Executes unattended in Cloudflare Worker (browser/tab may be completely closed).
- * 2. Collects official ThaiStock2D /live data during AM and PM market windows.
- * 3. Validates timestamp, SET and Value; rejects stale/future/invalid data.
- * 4. Stores ONLY date, time, session, SET, Value, timestamp in D1 live_observations.
- * 5. NEVER stores or uses live 2D.
- * 6. Strictly isolates AM and PM sessions.
+ * 2. Polls official ThaiStock2D /live endpoint (https://api.thaistock2d.com/live).
+ * 3. Reads ONLY: live.set, live.value, live.time, live.date.
+ * 4. Parses SET and Value into real numeric values.
+ * 5. NEVER uses /2d_result for live SET/Value collection.
+ * 6. NEVER stores or uses live.twod.
+ * 7. Stores ONLY date, time, session, SET, Value, timestamp in D1 live_observations.
+ * 8. Strictly isolates AM and PM sessions.
  */
 export async function executeLiveCollectionCycle(
   env: Env,
@@ -249,15 +266,112 @@ export async function executeLiveCollectionCycle(
   }
 
   const session: MarketSession = isAmWindow || time < '13:00:00' ? 'AM' : 'PM';
-  const source = options?.customSource || new ThaiStock2dSource();
 
-  const liveRes = await source.fetchLiveSnapshot(date);
-  if (!liveRes.success || !liveRes.snapshot) {
-    return {
-      success: false,
-      status: liveRes.status,
-      message: liveRes.errorDetails || 'Failed to fetch live market snapshot from ThaiStock2D',
-    };
+  let liveSet: number = NaN;
+  let liveValue: number = NaN;
+  let liveDateStr: string = date;
+  let liveTimeStr: string = time;
+  let liveTimestamp: string = `${date}T${time}+07:00`;
+
+  if (options?.customSource) {
+    // Custom source used in unit test harness
+    const liveRes = await options.customSource.fetchLiveSnapshot(date);
+    if (!liveRes.success || !liveRes.snapshot) {
+      return {
+        success: false,
+        status: liveRes.status,
+        message: liveRes.errorDetails || 'Failed to fetch live market snapshot from custom source',
+      };
+    }
+    liveSet = liveRes.snapshot.setNumeric;
+    liveValue = liveRes.snapshot.valueNumeric;
+    liveDateStr = liveRes.snapshot.date || date;
+    liveTimeStr = liveRes.snapshot.time || time;
+    liveTimestamp = liveRes.snapshot.timestamp || `${liveDateStr}T${liveTimeStr}+07:00`;
+  } else {
+    // Primary Production Live Collector: Poll official ThaiStock2D endpoint: https://api.thaistock2d.com/live
+    // Do NOT use /2d_result for live SET/Value collection
+    try {
+      const response = await fetch('https://api.thaistock2d.com/live', {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!response.ok) {
+        return {
+          success: false,
+          status: 'SOURCE_UNAVAILABLE',
+          message: `ThaiStock2D /live responded with HTTP status ${response.status}: ${response.statusText}`,
+        };
+      }
+
+      const responseText = await response.text();
+      const trimmed = (responseText || '').trim();
+
+      if (!trimmed || trimmed === '[]' || trimmed === '{}') {
+        return {
+          success: false,
+          status: 'MARKET_CLOSED',
+          message: 'Empty response from ThaiStock2D /live feed',
+        };
+      }
+
+      let payload: {
+        live?: {
+          set?: string | number | null;
+          value?: string | number | null;
+          time?: string | null;
+          date?: string | null;
+          twod?: string | null;
+        };
+      };
+
+      try {
+        payload = JSON.parse(trimmed);
+      } catch (parseErr) {
+        return {
+          success: false,
+          status: 'INSUFFICIENT_LIVE_DATA',
+          message: `Failed to parse /live JSON response: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+        };
+      }
+
+      const liveObj = payload.live;
+      if (!liveObj || typeof liveObj !== 'object') {
+        return {
+          success: false,
+          status: 'INSUFFICIENT_LIVE_DATA',
+          message: 'Missing "live" object in ThaiStock2D /live payload',
+        };
+      }
+
+      // Read ONLY: live.set, live.value, live.time, live.date.
+      // Invariant: Do NOT store or use live.twod.
+      liveSet = parseNumericLiveMetric(liveObj.set);
+      liveValue = parseNumericLiveMetric(liveObj.value);
+
+      if (isNaN(liveSet) || isNaN(liveValue) || liveSet < 100 || liveSet > 5000 || liveValue < 100) {
+        return {
+          success: false,
+          status: 'INSUFFICIENT_LIVE_DATA',
+          message: `Invalid or placeholder numeric SET/Value from /live: set="${liveObj.set}", value="${liveObj.value}"`,
+        };
+      }
+
+      if (typeof liveObj.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(liveObj.date.trim())) {
+        liveDateStr = liveObj.date.trim();
+      }
+      if (typeof liveObj.time === 'string' && /^\d{2}:\d{2}(:\d{2})?$/.test(liveObj.time.trim())) {
+        liveTimeStr = liveObj.time.trim().length === 5 ? `${liveObj.time.trim()}:00` : liveObj.time.trim();
+      }
+      liveTimestamp = `${liveDateStr}T${liveTimeStr}+07:00`;
+    } catch (fetchErr) {
+      return {
+        success: false,
+        status: 'SOURCE_UNAVAILABLE',
+        message: `Failed to poll https://api.thaistock2d.com/live: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+      };
+    }
   }
 
   // Strict Validation using LiveObservationBuffer:
@@ -270,11 +384,11 @@ export async function executeLiveCollectionCycle(
   const validator = new LiveObservationBuffer();
   const validation = validator.validateObservation(
     {
-      date: liveRes.snapshot.date,
-      time: liveRes.snapshot.time,
-      set: liveRes.snapshot.setNumeric,
-      value: liveRes.snapshot.valueNumeric,
-      timestamp: liveRes.snapshot.timestamp,
+      date: liveDateStr,
+      time: liveTimeStr,
+      set: liveSet,
+      value: liveValue,
+      timestamp: liveTimestamp,
       session,
       source: 'WORKER_LIVE_COLLECTOR',
     },

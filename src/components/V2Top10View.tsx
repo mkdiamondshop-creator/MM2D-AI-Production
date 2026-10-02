@@ -100,23 +100,27 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
   const liveTickCount = shadowRecord.liveObservationSnapshot?.length || 0;
 
   return (
-    <div id={`v2-shadow-top10-${session.toLowerCase()}`} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
+    <div id={`v2-shadow-top10-${session.toLowerCase()}`} className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl overflow-hidden shadow-xl backdrop-blur-md">
       {/* Header Bar */}
-      <div className="p-4 sm:p-5 border-b border-slate-800 bg-slate-900/90 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="p-4 sm:p-5 border-b border-slate-800/80 bg-[#0F172A]/70 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <div className="flex items-center space-x-2.5">
             <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
             </span>
-            <h3 className="font-bold text-slate-100 text-base sm:text-lg flex items-center space-x-2">
+            <h3 className="font-bold text-white text-base sm:text-lg flex flex-wrap items-center gap-2">
               <span>Consensus Top-10</span>
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+              <span className="text-xs text-slate-400 font-medium">
+                (ထိပ်တန်း ၁၀ ဦးစားပေး)
+              </span>
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
                 AUTO_WEIGHTED_V2
               </span>
               {shadowRecord.isFrozenAtLock ? (
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Final Prediction (Locked)
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3 text-amber-400" />
+                  Final Locked
                 </span>
               ) : liveTickCount <= 1 ? (
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
@@ -137,28 +141,28 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
         {/* AM / PM Toggle Controls */}
         <div className="flex items-center space-x-2 self-start sm:self-auto">
           {otherSessionAvailable && onSelectSession && (
-            <div className="inline-flex rounded-lg bg-slate-800/80 p-0.5 border border-slate-700/60 text-xs font-semibold">
+            <div className="inline-flex rounded-xl bg-slate-950/80 p-0.5 border border-slate-800 text-xs font-semibold">
               <button
                 id="btn-session-am"
                 onClick={() => onSelectSession('AM')}
-                className={`px-3 py-1 rounded-md transition-colors ${
+                className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
                   session === 'AM'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                AM (မနက်)
+                AM (12:01 PM)
               </button>
               <button
                 id="btn-session-pm"
                 onClick={() => onSelectSession('PM')}
-                className={`px-3 py-1 rounded-md transition-colors ${
+                className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
                   session === 'PM'
-                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                PM (ညနေ)
+                PM (4:30 PM)
               </button>
             </div>
           )}
@@ -166,7 +170,7 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
           <button
             id="btn-toggle-all-candidates"
             onClick={toggleExpandAll}
-            className="text-xs px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 hover:bg-slate-700/80 border border-slate-700 transition-colors"
+            className="text-xs px-2.5 py-1 rounded-lg bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
           >
             {allExpanded ? 'Collapse All' : 'Expand All'}
           </button>
@@ -265,15 +269,29 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
                 </div>
 
                 {/* Right Metrics: Probability & Supporting Engine Count */}
-                <div className="flex items-center space-x-3 sm:space-x-5">
-                  <div className="text-right">
+                <div className="flex items-center space-x-3 sm:space-x-4">
+                  {/* Probability progress bar */}
+                  <div className="hidden sm:block w-16 md:w-24 bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        candidate.rank === 1
+                          ? 'bg-gradient-to-r from-amber-400 to-amber-500'
+                          : 'bg-gradient-to-r from-cyan-400 to-blue-500'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(8, candidate.probability * 100 * 4))}%` }}
+                    />
+                  </div>
+
+                  <div className="text-right min-w-[55px]">
                     <div className="flex items-center justify-end space-x-1">
-                      <span className="text-sm sm:text-base font-black font-mono text-indigo-300">
+                      <span className={`text-sm sm:text-base font-black font-mono ${
+                        candidate.rank === 1 ? 'text-amber-300' : 'text-cyan-300'
+                      }`}>
                         {(candidate.probability * 100).toFixed(2)}%
                       </span>
                     </div>
-                    <div className="text-[11px] text-slate-400 hidden sm:block">
-                      prob mass
+                    <div className="text-[10px] text-slate-500 hidden sm:block uppercase">
+                      Prob Mass
                     </div>
                   </div>
 

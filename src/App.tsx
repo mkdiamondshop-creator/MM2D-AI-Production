@@ -33,6 +33,15 @@ import { MarketOpenGate } from './core/market/marketOpenGate';
 import { TimezoneContract } from './core/market/timezoneUtils';
 import { PRODUCTION_MODEL_VERSION, PredictionStatus } from './types/prediction';
 import { V2Top10View } from './components/V2Top10View';
+import { Header } from './components/Header';
+import { HeroCard } from './components/HeroCard';
+import { SessionTimeline } from './components/SessionTimeline';
+import { LiveMarketCard } from './components/LiveMarketCard';
+import { PredictionCard } from './components/PredictionCard';
+import { OfficialResultCard } from './components/OfficialResultCard';
+import { EvaluationCard } from './components/EvaluationCard';
+import { RecentResultsTable } from './components/RecentResultsTable';
+import { BottomNav, NavTab } from './components/BottomNav';
 import { MarketSession } from './types/market';
 import { globalShadowTracker } from './core/prediction/autoWeightedV2ShadowTracker';
 import { AutoWeightedV2ShadowValidator } from './core/prediction/autoWeightedV2ShadowValidator';
@@ -573,589 +582,246 @@ export default function App() {
     pmSufficiency.observationCount
   );
 
-  return (
-    <div id="mm2d-app-root" className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col font-sans selection:bg-neutral-800">
-      {/* Top Header */}
-      <header id="mm2d-top-header" className="border-b border-neutral-800 bg-neutral-900/80 backdrop-blur px-4 sm:px-6 py-3.5 sticky top-0 z-20">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-black text-white text-base shadow-sm">
-              2D
-            </div>
-            <div>
-              <h1 className="text-sm sm:text-base font-bold tracking-tight text-white flex items-center gap-2">
-                MM 2D Daily
-                <span className="hidden sm:inline-block text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                  Official Live
-                </span>
-              </h1>
-              <p className="text-[11px] text-neutral-400">မြန်မာ ၂လုံး ထီပေါက်ဂဏန်းနှင့် ခန့်မှန်းချက်</p>
-            </div>
-          </div>
+  const [activeNavTab, setActiveNavTab] = useState<NavTab>('home');
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={loadData}
-              disabled={loading}
-              title="Refresh Data"
-              className="p-2 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 border border-neutral-700/60 transition cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        </div>
-      </header>
+  const handleSelectNavTab = (tab: NavTab) => {
+    setActiveNavTab(tab);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (tab === 'dev') {
+      setIsDevMode(true);
+    } else {
+      setIsDevMode(false);
+    }
+  };
+
+  const isBkkMarketOpen = !isNonTradingDay && (
+    (bangkokTimeStr >= '10:00:00' && bangkokTimeStr <= '12:30:00') ||
+    (bangkokTimeStr >= '14:00:00' && bangkokTimeStr <= '17:00:00')
+  );
+
+  const marketStatusText = isNonTradingDay
+    ? 'MARKET CLOSED (ပိတ်ရက်)'
+    : isAmPreOpen
+    ? 'AM PRE-OPEN (ဈေးကွက်ကြို)'
+    : isPmPreOpen && bangkokTimeStr > '12:30:00' && bangkokTimeStr < '14:00:00'
+    ? 'INTERMISSION (ခေတ္တနား)'
+    : isBkkMarketOpen
+    ? 'MARKET OPEN (ဈေးကွက်ဖွင့်လှစ်ထားသည်)'
+    : 'MARKET CLOSED (ဈေးကွက်ပိတ်သည်)';
+
+  return (
+    <div id="mm2d-app-root" className="min-h-screen bg-[#0B0E17] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-white">
+      {/* Top Header */}
+      <Header
+        loading={loading}
+        onRefresh={loadData}
+        isDevMode={isDevMode}
+        onToggleDevMode={() => {
+          const next = !isDevMode;
+          setIsDevMode(next);
+          setActiveNavTab(next ? 'dev' : 'home');
+        }}
+        liveStatus={liveSourceStatus}
+      />
 
       {/* Main Container */}
       <main id="mm2d-main-container" className="flex-1 max-w-4xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
         {error && (
-          <div className="p-3.5 bg-red-950/40 border border-red-800/80 rounded-xl flex items-center gap-3 text-red-200 text-xs">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+          <div className="p-3.5 bg-rose-950/40 border border-rose-800/80 rounded-2xl flex items-center gap-3 text-rose-200 text-xs shadow-lg">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
         {/* ------------------------------------------------------------- */}
-        {/* USER MODE (DEFAULT MOBILE-FIRST VIEW)                         */}
+        {/* TAB 1: CONCISE HOME DASHBOARD (NO DUPLICATE FULL LISTS)       */}
         {/* ------------------------------------------------------------- */}
-        {!isDevMode ? (
-          <div className="space-y-6">
-            {/* Live Clock & Date Banner */}
-            <div className="bg-gradient-to-r from-neutral-900 via-neutral-900 to-neutral-900/80 border border-neutral-800/90 rounded-2xl p-4 sm:p-5 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-xs font-semibold">
-                    <Calendar className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-cyan-400">TODAY'S MARKET DATE</span>
-                    {isNonTradingDay && (
-                      <span className="ml-1 text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-neutral-800 text-neutral-300 border border-neutral-700">
-                        NON-TRADING DAY
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-lg sm:text-xl font-bold text-white tracking-tight">
-                    {new Intl.DateTimeFormat('en-US', {
-                      timeZone: 'Asia/Bangkok',
-                      weekday: 'long',
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    }).format(currentTime)}
-                  </div>
-                </div>
+        {!isDevMode && activeNavTab === 'home' && (
+          <div className="space-y-6 pb-20">
+            {/* A. Today's Market Date Hero Card */}
+            <HeroCard
+              currentTime={currentTime}
+              bangkokDateStr={bangkokDateStr}
+              bangkokTimeStr={bangkokTimeStr}
+              myanmarTimeStr={myanmarTimeStr}
+              isNonTradingDay={isNonTradingDay}
+              marketStatusText={marketStatusText}
+              isMarketOpen={isBkkMarketOpen}
+            />
 
-                <div className="flex items-center gap-3 bg-neutral-950/60 border border-neutral-800 rounded-xl px-3.5 py-2">
-                  <Clock className="w-4 h-4 text-neutral-400" />
-                  <div className="text-right">
-                    <div className="text-xs font-mono font-bold text-neutral-200">{bangkokTimeStr} <span className="text-[10px] text-neutral-400 font-sans">BKK</span></div>
-                    <div className="text-[10px] text-neutral-400">{myanmarTimeStr} <span className="text-[9px] text-neutral-500 font-sans">MMT</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            {/* B & C. AM / PM Session Selector + Market Session Timeline */}
+            <SessionTimeline
+              selectedSession={selectedShadowSession}
+              onSelectSession={setSelectedShadowSession}
+              isAmLocked={isAmLocked}
+              isPmLocked={isPmLocked}
+              hasAmResult={Boolean(amResultRecord)}
+              hasPmResult={Boolean(pmResultRecord)}
+              isAmPreOpen={isAmPreOpen}
+              isPmPreOpen={isPmPreOpen}
+              amTickCount={amSufficiency.observationCount}
+              pmTickCount={pmSufficiency.observationCount}
+            />
 
-            {/* AM & PM Session Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* ========================================================= */}
-              {/* AM SESSION CARD                                           */}
-              {/* ========================================================= */}
-              <div id="session-card-am" className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-5 flex flex-col justify-between space-y-5 hover:border-neutral-700/80 transition shadow-sm">
-                <div className="space-y-4">
-                  {/* Session Header */}
-                  <div className="flex items-center justify-between border-b border-neutral-800/80 pb-3">
-                    <div>
-                      <div className="text-xs font-bold uppercase tracking-wider text-cyan-400">Morning Session</div>
-                      <div className="text-sm font-semibold text-white">မနက်ပိုင်း (12:01 PM)</div>
-                    </div>
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${amBadge.colorClass}`}
-                    >
-                      {amBadge.icon}
-                      {amBadge.label}
-                    </span>
-                  </div>
+            {/* D. Live Market Overview Card (2-column responsive grid) */}
+            <LiveMarketCard
+              liveSnapshot={liveSnapshot}
+              liveStatus={liveSourceStatus}
+              recentObservations={globalLiveObservationBuffer.getObservations(selectedShadowSession, bangkokDateStr)}
+            />
 
-                  {/* AM Model Prediction Display */}
-                  <div className="bg-neutral-950/70 border border-neutral-800/90 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                        AM Prediction (ခန့်မှန်းဂဏန်း)
-                      </span>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
-                        isNonTradingDay
-                          ? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-                          : isAmLocked
-                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                          : isAmPreOpen
-                          ? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-                          : amSufficiency.state === 'AWAITING_DATA'
-                          ? 'bg-blue-500/10 text-blue-300 border-blue-500/20'
-                          : amSufficiency.state === 'EARLY_PREDICTION_READY'
-                          ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20'
-                          : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20'
-                      }`}>
-                        {isNonTradingDay
-                          ? 'CLOSED'
-                          : isAmLocked
-                          ? 'FINAL PREDICTION (LOCKED)'
-                          : isAmPreOpen
-                          ? 'OPENS 10:00 AM MMT'
-                          : amSufficiency.state === 'AWAITING_DATA'
-                          ? 'AWAITING LIVE DATA'
-                          : amSufficiency.state === 'EARLY_PREDICTION_READY'
-                          ? 'EARLY PREDICTION'
-                          : `REFINING (${amSufficiency.observationCount} TICKS)`}
-                      </span>
-                    </div>
-
-                    <div className="flex items-baseline justify-between pt-1">
-                      <div>
-                        <div className="text-3xl sm:text-4xl font-black text-amber-400 tracking-tight font-mono">
-                          {isNonTradingDay || isAmPreOpen || (!amSufficiency.isPredictionPermitted && !isAmLocked && !amResultRecord) || !amV2Record?.top1
-                            ? '--'
-                            : amV2Record.top1}
-                        </div>
-                        {isNonTradingDay && (
-                          <div className="text-[10px] text-neutral-500 font-sans">
-                            NON_TRADING_DAY
-                          </div>
-                        )}
-                        {!isNonTradingDay && isAmPreOpen && (
-                          <div className="text-[10px] text-neutral-500 font-sans">
-                            MARKET_NOT_OPEN (Opens 10:00 AM MMT)
-                          </div>
-                        )}
-                        {!isNonTradingDay && !isAmPreOpen && !isAmLocked && !amResultRecord && amSufficiency.state === 'AWAITING_DATA' && (
-                          <div className="text-[10px] text-blue-400/90 font-sans">
-                            WAITING_FOR_LIVE_DATA
-                          </div>
-                        )}
-                        {!isNonTradingDay && !isAmPreOpen && !isAmLocked && !amResultRecord && amSufficiency.state === 'EARLY_PREDICTION_READY' && (
-                          <div className="text-[10px] text-cyan-400 font-sans flex items-center gap-1">
-                            <Sparkles className="w-3 h-3 text-cyan-400" />
-                            Early Prediction (1 Live Tick)
-                          </div>
-                        )}
-                        {!isNonTradingDay && !isAmPreOpen && !isAmLocked && !amResultRecord && amSufficiency.state === 'REFINING' && (
-                          <div className="text-[10px] text-indigo-400 font-sans flex items-center gap-1">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                            Refining ({amSufficiency.observationCount} Live Ticks)
-                          </div>
-                        )}
-                        {!isNonTradingDay && isAmLocked && !amResultRecord && (
-                          <div className="text-[10px] text-amber-400 font-sans">
-                            PREDICTION_LOCKED (Frozen at Cutoff)
-                          </div>
-                        )}
-                        {amResultRecord && (
-                          <div className="text-[10px] text-emerald-400 font-sans">
-                            OFFICIAL_SETTLEMENT_AVAILABLE
-                          </div>
-                        )}
-                      </div>
-
-                      {!isNonTradingDay && !isAmPreOpen && (amSufficiency.isPredictionPermitted || isAmLocked || amResultRecord) && amV2Record?.top5 && amV2Record.top5.length > 0 && (
-                        <div className="text-right">
-                          <span className="text-[10px] text-neutral-500 block uppercase">Top-5 Ensemble</span>
-                          <div className="flex items-center gap-1.5 pt-1">
-                            {amV2Record.top5.map((cand, idx) => (
-                              <span
-                                key={cand}
-                                className={`px-1.5 py-0.5 rounded font-mono text-xs ${
-                                  idx === 0
-                                    ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold'
-                                    : 'bg-neutral-900 border border-neutral-800 text-neutral-300'
-                                }`}
-                              >
-                                {cand}
-                              </span>
-                            ))}
-                          </div>
-                          {amV2Record.immutableV2Output?.candidates?.[0] && (
-                            <div className="text-[10px] text-neutral-400 pt-1 flex items-center justify-end gap-1.5 font-mono">
-                              <span className="text-neutral-500">Dominant Engine:</span>
-                              <span className="text-cyan-400 font-medium">
-                                {amV2Record.immutableV2Output.candidates[0].dominantEngine.replace('_V1', '')}
-                              </span>
-                              <span className="text-neutral-600">|</span>
-                              <span className="text-emerald-400 font-medium">
-                                Supported by {amV2Record.immutableV2Output.candidates[0].consensusCount}/4 Engines
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Official Result Display */}
-                  <div className="bg-neutral-950/90 border border-neutral-800 rounded-xl p-4 text-center space-y-2">
-                    <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
-                      Official AM Result (12:01 PM)
-                    </div>
-
-                    {amResultRecord ? (
-                      <div className="space-y-2">
-                        <div className="text-4xl sm:text-5xl font-black text-cyan-400 tracking-tight font-mono">
-                          {amResultRecord.twod}
-                        </div>
-                        <div className="flex items-center justify-center gap-4 text-xs font-mono text-neutral-300 border-t border-neutral-800/80 pt-2">
-                          <div>
-                            <span className="text-neutral-500 text-[10px] block">SET</span>
-                            {amResultRecord.setRaw}
-                          </div>
-                          <div className="h-4 w-px bg-neutral-800" />
-                          <div>
-                            <span className="text-neutral-500 text-[10px] block">VALUE</span>
-                            {amResultRecord.valueRaw}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="py-4 space-y-1">
-                        <div className="text-2xl font-bold font-mono text-neutral-600">--</div>
-                        <div className="text-xs text-neutral-400">
-                          {isAmLocked ? 'Market drawing at 12:01 PM...' : 'Waiting for morning session'}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Pre-session (11:00 AM) note if available */}
-                {amPreRecord && (
-                  <div className="text-[11px] text-neutral-400 flex items-center justify-between border-t border-neutral-800/60 pt-2 font-mono">
-                    <span className="text-neutral-500 font-sans">11:00 AM Market Check:</span>
-                    <span>2D: <b className="text-neutral-200">{amPreRecord.twod}</b> (SET: {amPreRecord.setRaw})</span>
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-neutral-800/60 flex justify-end">
-                  <button
-                    id="btn-jump-shadow-am"
-                    onClick={() => {
-                      setSelectedShadowSession('AM');
-                      document.getElementById('v2-shadow-top10-am')?.scrollIntoView({ behavior: 'smooth' });
-                    }}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 transition-colors"
-                  >
-                    <span>Consensus Top-10</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* ========================================================= */}
-              {/* PM SESSION CARD                                           */}
-              {/* ========================================================= */}
-              <div id="session-card-pm" className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-5 flex flex-col justify-between space-y-5 hover:border-neutral-700/80 transition shadow-sm">
-                <div className="space-y-4">
-                  {/* Session Header */}
-                  <div className="flex items-center justify-between border-b border-neutral-800/80 pb-3">
-                    <div>
-                      <div className="text-xs font-bold uppercase tracking-wider text-cyan-400">Evening Session</div>
-                      <div className="text-sm font-semibold text-white">ညနေပိုင်း (4:30 PM)</div>
-                    </div>
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${pmBadge.colorClass}`}
-                    >
-                      {pmBadge.icon}
-                      {pmBadge.label}
-                    </span>
-                  </div>
-
-                  {/* PM Model Prediction Display */}
-                  <div className="bg-neutral-950/70 border border-neutral-800/90 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                        PM Prediction (ခန့်မှန်းဂဏန်း)
-                      </span>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
-                        isNonTradingDay
-                          ? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-                          : isPmLocked
-                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                          : isPmPreOpen
-                          ? 'bg-neutral-800 text-neutral-400 border-neutral-700'
-                          : pmSufficiency.state === 'AWAITING_DATA'
-                          ? 'bg-blue-500/10 text-blue-300 border-blue-500/20'
-                          : pmSufficiency.state === 'EARLY_PREDICTION_READY'
-                          ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20'
-                          : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20'
-                      }`}>
-                        {isNonTradingDay
-                          ? 'CLOSED'
-                          : isPmLocked
-                          ? 'FINAL PREDICTION (LOCKED)'
-                          : isPmPreOpen
-                          ? 'OPENS 2:00 PM MMT'
-                          : pmSufficiency.state === 'AWAITING_DATA'
-                          ? 'AWAITING LIVE DATA'
-                          : pmSufficiency.state === 'EARLY_PREDICTION_READY'
-                          ? 'EARLY PREDICTION'
-                          : `REFINING (${pmSufficiency.observationCount} TICKS)`}
-                      </span>
-                    </div>
-
-                    <div className="flex items-baseline justify-between pt-1">
-                      <div>
-                        <div className="text-3xl sm:text-4xl font-black text-amber-400 tracking-tight font-mono">
-                          {isNonTradingDay || isPmPreOpen || (!pmSufficiency.isPredictionPermitted && !isPmLocked && !pmResultRecord) || !pmV2Record?.top1
-                            ? '--'
-                            : pmV2Record.top1}
-                        </div>
-                        {isNonTradingDay && (
-                          <div className="text-[10px] text-neutral-500 font-sans">
-                            NON_TRADING_DAY
-                          </div>
-                        )}
-                        {!isNonTradingDay && isPmPreOpen && (
-                          <div className="text-[10px] text-neutral-500 font-sans">
-                            MARKET_NOT_OPEN (Opens 2:00 PM MMT)
-                          </div>
-                        )}
-                        {!isNonTradingDay && !isPmPreOpen && !isPmLocked && !pmResultRecord && pmSufficiency.state === 'AWAITING_DATA' && (
-                          <div className="text-[10px] text-blue-400/90 font-sans">
-                            WAITING_FOR_LIVE_DATA
-                          </div>
-                        )}
-                        {!isNonTradingDay && !isPmPreOpen && !isPmLocked && !pmResultRecord && pmSufficiency.state === 'EARLY_PREDICTION_READY' && (
-                          <div className="text-[10px] text-cyan-400 font-sans flex items-center gap-1">
-                            <Sparkles className="w-3 h-3 text-cyan-400" />
-                            Early Prediction (1 Live Tick)
-                          </div>
-                        )}
-                        {!isNonTradingDay && !isPmPreOpen && !isPmLocked && !pmResultRecord && pmSufficiency.state === 'REFINING' && (
-                          <div className="text-[10px] text-indigo-400 font-sans flex items-center gap-1">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                            Refining ({pmSufficiency.observationCount} Live Ticks)
-                          </div>
-                        )}
-                        {!isNonTradingDay && isPmLocked && !pmResultRecord && (
-                          <div className="text-[10px] text-amber-400 font-sans">
-                            PREDICTION_LOCKED (Frozen at Cutoff)
-                          </div>
-                        )}
-                        {pmResultRecord && (
-                          <div className="text-[10px] text-emerald-400 font-sans">
-                            OFFICIAL_SETTLEMENT_AVAILABLE
-                          </div>
-                        )}
-                      </div>
-
-                      {!isNonTradingDay && !isPmPreOpen && (pmSufficiency.isPredictionPermitted || isPmLocked || pmResultRecord) && pmV2Record?.top5 && pmV2Record.top5.length > 0 && (
-                        <div className="text-right">
-                          <span className="text-[10px] text-neutral-500 block uppercase">Top-5 Ensemble</span>
-                          <div className="flex items-center gap-1.5 pt-1">
-                            {pmV2Record.top5.map((cand, idx) => (
-                              <span
-                                key={cand}
-                                className={`px-1.5 py-0.5 rounded font-mono text-xs ${
-                                  idx === 0
-                                    ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold'
-                                    : 'bg-neutral-900 border border-neutral-800 text-neutral-300'
-                                }`}
-                              >
-                                {cand}
-                              </span>
-                            ))}
-                          </div>
-                          {pmV2Record.immutableV2Output?.candidates?.[0] && (
-                            <div className="text-[10px] text-neutral-400 pt-1 flex items-center justify-end gap-1.5 font-mono">
-                              <span className="text-neutral-500">Dominant Engine:</span>
-                              <span className="text-cyan-400 font-medium">
-                                {pmV2Record.immutableV2Output.candidates[0].dominantEngine.replace('_V1', '')}
-                              </span>
-                              <span className="text-neutral-600">|</span>
-                              <span className="text-emerald-400 font-medium">
-                                Supported by {pmV2Record.immutableV2Output.candidates[0].consensusCount}/4 Engines
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Official Result Display */}
-                  <div className="bg-neutral-950/90 border border-neutral-800 rounded-xl p-4 text-center space-y-2">
-                    <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
-                      Official PM Result (4:30 PM)
-                    </div>
-
-                    {pmResultRecord ? (
-                      <div className="space-y-2">
-                        <div className="text-4xl sm:text-5xl font-black text-cyan-400 tracking-tight font-mono">
-                          {pmResultRecord.twod}
-                        </div>
-                        <div className="flex items-center justify-center gap-4 text-xs font-mono text-neutral-300 border-t border-neutral-800/80 pt-2">
-                          <div>
-                            <span className="text-neutral-500 text-[10px] block">SET</span>
-                            {pmResultRecord.setRaw}
-                          </div>
-                          <div className="h-4 w-px bg-neutral-800" />
-                          <div>
-                            <span className="text-neutral-500 text-[10px] block">VALUE</span>
-                            {pmResultRecord.valueRaw}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="py-4 space-y-1">
-                        <div className="text-2xl font-bold font-mono text-neutral-600">--</div>
-                        <div className="text-xs text-neutral-400">
-                          {isPmLocked ? 'Market drawing at 4:30 PM...' : 'Waiting for evening session'}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Pre-session (3:00 PM) note if available */}
-                {pmPreRecord && (
-                  <div className="text-[11px] text-neutral-400 flex items-center justify-between border-t border-neutral-800/60 pt-2 font-mono">
-                    <span className="text-neutral-500 font-sans">3:00 PM Market Check:</span>
-                    <span>2D: <b className="text-neutral-200">{pmPreRecord.twod}</b> (SET: {pmPreRecord.setRaw})</span>
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-neutral-800/60 flex justify-end">
-                  <button
-                    id="btn-jump-shadow-pm"
-                    onClick={() => {
-                      setSelectedShadowSession('PM');
-                      document.getElementById('v2-shadow-top10-pm')?.scrollIntoView({ behavior: 'smooth' });
-                    }}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 transition-colors"
-                  >
-                    <span>Consensus Top-10</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* V2 Ensemble Consensus Top-10 */}
-            <div id={`v2-shadow-top10-${selectedShadowSession.toLowerCase()}`} className="space-y-2">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-neutral-400 px-1 py-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-neutral-500 font-sans">Prediction Architecture:</span>
-                  <span className="px-2 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-cyan-400 font-bold font-mono">
-                    AUTO_WEIGHTED_V2
+            {/* E, F, G. Selected Session Prediction Card & Official Result Card */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                    {selectedShadowSession} Session Intelligence
                   </span>
-                  {isSelectedLocked ? (
-                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-medium text-[11px]">
-                      Final Prediction (Locked)
-                    </span>
-                  ) : isSelectedPreOpen ? (
-                    <span className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 font-medium text-[11px]">
-                      Pre-Open ({selectedShadowSession})
-                    </span>
-                  ) : activeSufficiency.state === 'AWAITING_DATA' ? (
-                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-blue-300 font-medium text-[11px]">
-                      Awaiting Data ({selectedShadowSession})
-                    </span>
-                  ) : activeSufficiency.state === 'EARLY_PREDICTION_READY' ? (
-                    <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 font-medium text-[11px]">
-                      Early Prediction ({selectedShadowSession})
-                    </span>
-                  ) : (
-                    <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-medium text-[11px]">
-                      Refining ({activeSufficiency.observationCount} Ticks - {selectedShadowSession})
-                    </span>
-                  )}
+                  <span className="text-[11px] text-cyan-400 font-mono">
+                    ({selectedShadowSession === 'AM' ? '12:01 PM Target' : '4:30 PM Target'})
+                  </span>
                 </div>
-                <span className="text-[11px] text-neutral-400 font-sans mt-0.5 sm:mt-0">
-                  {activeSufficiency.reason}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedShadowSession(selectedShadowSession === 'AM' ? 'PM' : 'AM')}
+                  className="text-xs text-slate-400 hover:text-cyan-400 font-medium transition cursor-pointer flex items-center gap-1"
+                >
+                  <span>Switch to {selectedShadowSession === 'AM' ? 'PM (ညနေ)' : 'AM (မနက်)'}</span>
+                  <ChevronRight className="w-3 h-3" />
+                </button>
               </div>
-              <V2Top10View
-                session={selectedShadowSession}
-                shadowRecord={activeShadowRecord}
-                onSelectSession={setSelectedShadowSession}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Active Session Prediction Card */}
+                <PredictionCard
+                  session={selectedShadowSession}
+                  v2Record={activeShadowRecord}
+                  isLocked={isSelectedLocked}
+                  isPreOpen={isSelectedPreOpen}
+                  isNonTradingDay={isNonTradingDay}
+                  hasOfficialResult={Boolean(selectedShadowSession === 'AM' ? amResultRecord : pmResultRecord)}
+                  sufficiencyState={activeSufficiency.state}
+                  observationCount={activeSufficiency.observationCount}
+                  onViewTop10={() => handleSelectNavTab('top10')}
+                />
+
+                {/* Active Session Official Result Card */}
+                <OfficialResultCard
+                  session={selectedShadowSession}
+                  resultRecord={selectedShadowSession === 'AM' ? amResultRecord : pmResultRecord}
+                  isLocked={isSelectedLocked}
+                />
+              </div>
+            </div>
+
+            {/* H. Compact Evaluation Card (Appears if official result settled) */}
+            {activeShadowRecord?.settlementComparison && (
+              <EvaluationCard
+                settlementComparison={activeShadowRecord.settlementComparison}
               />
-            </div>
-
-            {/* Recent Confirmed Results (User History Table) */}
-            <div className="bg-neutral-900/40 border border-neutral-800 rounded-2xl p-5 space-y-4 shadow-sm">
-              <div className="flex items-center justify-between border-b border-neutral-800/80 pb-3">
-                <div>
-                  <h2 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wide">
-                    Recent Official Results
-                  </h2>
-                  <p className="text-[11px] text-neutral-400">လတ်တလော ထွက်ရှိထားသော တရားဝင်ပေါက်ဂဏန်းများ</p>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-neutral-800 text-neutral-400">
-                      <th className="py-2.5 px-3 font-medium">Date</th>
-                      <th className="py-2.5 px-3 font-medium text-center text-cyan-400 font-bold">12:01 PM (AM)</th>
-                      <th className="py-2.5 px-3 font-medium text-center text-cyan-400 font-bold">4:30 PM (PM)</th>
-                      <th className="py-2.5 px-3 font-medium text-right">SET Index</th>
-                      <th className="py-2.5 px-3 font-medium text-right">Value (M)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-800/60 font-mono text-[11px]">
-                    {recentHistory.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-6 text-center text-neutral-500 font-sans">
-                          {loading ? 'Loading history...' : 'No confirmed records available.'}
-                        </td>
-                      </tr>
-                    ) : (
-                      recentHistory.map((item) => (
-                        <tr key={item.date} className="hover:bg-neutral-800/30 transition">
-                          <td className="py-2.5 px-3 text-neutral-300 font-sans font-medium">{item.date}</td>
-                          <td className="py-2.5 px-3 text-center">
-                            {item.am ? (
-                              <span className="font-bold text-cyan-300 text-sm px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
-                                {item.am.twod}
-                              </span>
-                            ) : (
-                              <span className="text-neutral-600">—</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            {item.pm ? (
-                              <span className="font-bold text-cyan-300 text-sm px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
-                                {item.pm.twod}
-                              </span>
-                            ) : (
-                              <span className="text-neutral-600">—</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-neutral-300">
-                            {item.pm?.setRaw || item.am?.setRaw || '—'}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-neutral-300">
-                            {item.pm?.valueRaw || item.am?.valueRaw || '—'}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            )}
           </div>
-        ) : (
-          /* ------------------------------------------------------------- */
-          /* DEVELOPER / ADMIN DIAGNOSTICS MODE                            */
-          /* ------------------------------------------------------------- */
-          <div className="space-y-6">
-            <div className="flex items-center justify-between bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 2: DEDICATED TOP-10 VIEW                                  */}
+        {/* ------------------------------------------------------------- */}
+        {!isDevMode && activeNavTab === 'top10' && (
+          <div className="space-y-6 pb-20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-cyan-400" />
+                  <h1 className="text-lg sm:text-xl font-black text-white uppercase tracking-tight">
+                    Consensus Top-10 Candidates
+                  </h1>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Complete AUTO_WEIGHTED_V2 algorithmic probability ranking (ထိပ်တန်း ၁၀ လုံး ခန့်မှန်းချက်)
+                </p>
+              </div>
+
+              {/* Dedicated AM / PM Selector for Top 10 */}
+              <div className="inline-flex rounded-xl bg-slate-950 p-1 border border-slate-800 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setSelectedShadowSession('AM')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    selectedShadowSession === 'AM'
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-md shadow-cyan-500/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  AM (12:01 PM)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedShadowSession('PM')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    selectedShadowSession === 'PM'
+                      ? 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white shadow-md shadow-purple-500/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  PM (4:30 PM)
+                </button>
+              </div>
+            </div>
+
+            <V2Top10View
+              session={selectedShadowSession}
+              shadowRecord={activeShadowRecord}
+              onSelectSession={setSelectedShadowSession}
+            />
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 3: DEDICATED HISTORY VIEW                                 */}
+        {/* ------------------------------------------------------------- */}
+        {!isDevMode && activeNavTab === 'history' && (
+          <div className="space-y-6 pb-20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-cyan-400" />
+                  <h1 className="text-lg sm:text-xl font-black text-white uppercase tracking-tight">
+                    Official Settlement History
+                  </h1>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Stock Exchange of Thailand confirmed settlements and historical database (တရားဝင် ထွက်ရှိချက် မှတ်တမ်း)
+                </p>
+              </div>
+
+              <div className="text-xs font-mono text-cyan-400 bg-cyan-950/60 px-3 py-1.5 rounded-xl border border-cyan-800/40">
+                30-Day Verified Window
+              </div>
+            </div>
+
+            <RecentResultsTable
+              recentHistory={recentHistory}
+              loading={loading}
+            />
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 4 / DEV MODE: DEVELOPER DIAGNOSTICS VIEW                  */}
+        {/* ------------------------------------------------------------- */}
+        {(isDevMode || activeNavTab === 'dev') && (
+          <div className="space-y-6 pb-20">
+            <div className="flex items-center justify-between bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 shadow-lg">
               <div className="flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-amber-400" />
                 <span className="text-xs font-bold uppercase tracking-wider text-amber-300">Developer Diagnostic Mode</span>
               </div>
               <button
-                onClick={() => setIsDevMode(false)}
-                className="text-xs px-3 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded border border-neutral-700 transition cursor-pointer"
+                onClick={() => {
+                  setIsDevMode(false);
+                  setActiveNavTab('home');
+                }}
+                className="text-xs px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-xl border border-slate-700 transition cursor-pointer font-medium"
               >
                 Return to User Mode
               </button>
@@ -1163,60 +829,60 @@ export default function App() {
 
             {/* Architecture Metrics Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-4 space-y-1">
-                <div className="text-xs text-neutral-400 flex items-center gap-1.5">
+              <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 space-y-1 shadow-md">
+                <div className="text-xs text-slate-400 flex items-center gap-1.5">
                   <Database className="w-3.5 h-3.5 text-cyan-400" />
                   Verified Dataset
                 </div>
-                <div className="text-xl font-bold text-neutral-100">
+                <div className="text-xl font-bold text-white">
                   {stats ? stats.totalVerifiedCount.toLocaleString() : '—'}
                 </div>
-                <div className="text-[10px] text-neutral-500">Cloudflare D1 SQLite Engine</div>
+                <div className="text-[10px] text-slate-500">Cloudflare D1 SQLite Engine</div>
               </div>
 
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-4 space-y-1">
-                <div className="text-xs text-neutral-400 flex items-center gap-1.5">
+              <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 space-y-1 shadow-md">
+                <div className="text-xs text-slate-400 flex items-center gap-1.5">
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                   Coverage Range
                 </div>
-                <div className="text-xs font-semibold text-neutral-200 pt-1 font-mono">
+                <div className="text-xs font-semibold text-slate-200 pt-1 font-mono">
                   2021-10-28 → {stats?.latestStoredDate || '2026-08-26'}
                 </div>
-                <div className="text-[10px] text-emerald-500/80">100% Math Integrity Verified</div>
+                <div className="text-[10px] text-emerald-400">100% Math Integrity Verified</div>
               </div>
 
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-4 space-y-1">
-                <div className="text-xs text-neutral-400 flex items-center gap-1.5">
+              <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 space-y-1 shadow-md">
+                <div className="text-xs text-slate-400 flex items-center gap-1.5">
                   <Activity className="w-3.5 h-3.5 text-amber-400" />
                   Backfill Checkpoint
                 </div>
-                <div className="text-xs font-semibold text-neutral-200 pt-1 font-mono">
+                <div className="text-xs font-semibold text-slate-200 pt-1 font-mono">
                   {checkpoints?.historicalCheckpoint?.lastProcessedDate || '2026-08-26'}
                 </div>
-                <div className="text-[10px] text-amber-500/80">Status: SUCCESS</div>
+                <div className="text-[10px] text-amber-400">Status: SUCCESS</div>
               </div>
 
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-4 space-y-1">
-                <div className="text-xs text-neutral-400 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+              <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 space-y-1 shadow-md">
+                <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400" />
                   Live Sync Checkpoint
                 </div>
-                <div className="text-xs font-semibold text-neutral-200 pt-1 font-mono">
+                <div className="text-xs font-semibold text-slate-200 pt-1 font-mono">
                   {checkpoints?.liveCheckpoint?.lastSuccessfulSyncDate || '2026-08-26'}
                 </div>
-                <div className="text-[10px] text-blue-500/80">Cron: */30 * * * *</div>
+                <div className="text-[10px] text-cyan-400">Cron: */30 * * * *</div>
               </div>
             </div>
 
             {/* Detailed Verified Records Log */}
-            <div className="bg-neutral-900/40 border border-neutral-800 rounded-xl p-4 space-y-3">
-              <div className="text-xs font-semibold text-neutral-200 uppercase tracking-wide">
+            <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 space-y-3 shadow-md">
+              <div className="text-xs font-semibold text-slate-200 uppercase tracking-wide">
                 Verified Storage Stream (Latest 10)
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse font-mono">
                   <thead>
-                    <tr className="border-b border-neutral-800 text-neutral-400 text-[11px]">
+                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
                       <th className="py-2 px-3">Date</th>
                       <th className="py-2 px-3">Time</th>
                       <th className="py-2 px-3">SET</th>
@@ -1226,15 +892,15 @@ export default function App() {
                       <th className="py-2 px-3">Parity</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-neutral-800/60 text-[11px]">
+                  <tbody className="divide-y divide-slate-800/60 text-[11px]">
                     {records.slice(0, 10).map((r) => (
-                      <tr key={r.id} className="hover:bg-neutral-800/30">
-                        <td className="py-1.5 px-3 text-neutral-300">{r.date}</td>
-                        <td className="py-1.5 px-3 text-neutral-400">{r.time}</td>
-                        <td className="py-1.5 px-3 text-neutral-300">{r.setRaw}</td>
-                        <td className="py-1.5 px-3 text-neutral-300">{r.valueRaw}</td>
+                      <tr key={r.id} className="hover:bg-slate-800/30">
+                        <td className="py-1.5 px-3 text-slate-300">{r.date}</td>
+                        <td className="py-1.5 px-3 text-slate-400">{r.time}</td>
+                        <td className="py-1.5 px-3 text-slate-300">{r.setRaw}</td>
+                        <td className="py-1.5 px-3 text-slate-300">{r.valueRaw}</td>
                         <td className="py-1.5 px-3 text-cyan-300 font-bold">{r.twod}</td>
-                        <td className="py-1.5 px-3 text-neutral-400 text-[10px]">{r.provenance}</td>
+                        <td className="py-1.5 px-3 text-slate-400 text-[10px]">{r.provenance}</td>
                         <td className="py-1.5 px-3">
                           <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
                             {r.mathematicalCheck?.isMathematicallyConsistent ? 'VALIDATED' : 'CALIBRATED'}
@@ -1251,19 +917,29 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer id="mm2d-app-footer" className="border-t border-neutral-800/80 px-4 sm:px-6 py-4 mt-auto">
-        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-neutral-500">
+      <footer id="mm2d-app-footer" className="border-t border-slate-800/80 px-4 sm:px-6 py-4 mt-auto mb-16 sm:mb-14">
+        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div>
             MM 2D Daily &bull; Official Thai SET Market Synchronized
           </div>
           <button
-            onClick={() => setIsDevMode(!isDevMode)}
-            className="text-[11px] text-neutral-500 hover:text-neutral-300 underline underline-offset-4 transition cursor-pointer"
+            onClick={() => {
+              const next = !isDevMode;
+              setIsDevMode(next);
+              setActiveNavTab(next ? 'dev' : 'home');
+            }}
+            className="text-[11px] text-slate-500 hover:text-cyan-400 underline underline-offset-4 transition cursor-pointer"
           >
             {isDevMode ? 'Switch to User View' : 'Developer Diagnostics'}
           </button>
         </div>
       </footer>
+
+      {/* Bottom Sticky Navigation */}
+      <BottomNav
+        activeTab={activeNavTab}
+        onSelectTab={handleSelectNavTab}
+      />
     </div>
   );
 }
