@@ -449,6 +449,52 @@ export async function executeServerSidePredictionCycle(
   return ServerSideV2Coordinator.coordinateActiveCycle(d1, options);
 }
 
+/**
+ * Unattended Automatic Live Retention Cleanup
+ * Invariants:
+ * 1. Live SET + Value data is temporary only.
+ * 2. Retains live observations for a maximum of 24 hours.
+ * 3. Worker cron automatically deletes `live_observations` rows older than 24 hours.
+ * 4. NEVER deletes Historical Dataset (verified_market_records), Official Results,
+ *    Prediction Snapshots (v2_predictions), or Evaluation/OOS data.
+ * 5. NEVER stores or uses "live.twod".
+ * 6. Keeps prediction logic, engine weights, UI, API contracts, and D1 schema unchanged.
+ */
+export async function executeLiveRetentionCleanup(
+  env: Env,
+  options?: {
+    maxAgeHours?: number;
+    simulatedNow?: Date | string | number;
+  }
+): Promise<{
+  success: boolean;
+  deletedCount: number;
+  cutoffIso: string;
+  cutoffBangkokDate: string;
+  cutoffBangkokTime: string;
+}> {
+  const maxHours = options?.maxAgeHours ?? 24;
+  const nowBkk = TimezoneContract.toBangkok(options?.simulatedNow);
+  const nowEpoch = nowBkk.epochMillis;
+  const cutoffEpoch = nowEpoch - maxHours * 60 * 60 * 1000;
+  const cutoffBkk = TimezoneContract.toBangkok(cutoffEpoch);
+
+  const d1 = new D1StorageAdapter(env.DB);
+  const result = await d1.deleteLiveObservationsOlderThan({
+    cutoffIso: cutoffBkk.isoString,
+    cutoffDate: cutoffBkk.dateStr,
+    cutoffTime: cutoffBkk.timeStr,
+  });
+
+  return {
+    success: true,
+    deletedCount: result.deletedCount,
+    cutoffIso: cutoffBkk.isoString,
+    cutoffBangkokDate: cutoffBkk.dateStr,
+    cutoffBangkokTime: cutoffBkk.timeStr,
+  };
+}
+
 export default {
   /**
    * Cloudflare Worker Scheduled (Cron) Entry Point
@@ -478,6 +524,13 @@ export default {
           await executeSyncCycle(env);
         } catch (syncErr) {
           console.error('[MM2D Worker Cron] Error during scheduled sync:', syncErr);
+        }
+
+        // 4. Automatic cleanup of temporary live observations older than 24 hours
+        try {
+          await executeLiveRetentionCleanup(env);
+        } catch (cleanupErr) {
+          console.error('[MM2D Worker Cron] Live retention cleanup notice:', cleanupErr);
         }
       })()
     );
@@ -576,6 +629,14 @@ export default {
         });
 
         return jsonResponse(result, result.success ? 200 : 400);
+      }
+
+      // POST or GET /api/live/cleanup -> Automatic or manual cleanup of temporary live observations (>24h)
+      if (pathname === '/api/live/cleanup') {
+        const hoursParam = searchParams.get('hours');
+        const maxAgeHours = hoursParam ? parseFloat(hoursParam) : 24;
+        const result = await executeLiveRetentionCleanup(env, { maxAgeHours });
+        return jsonResponse({ success: true, ...result });
       }
 
       // GET /api/predictions -> Query stored server-side V2 predictions & lock snapshots

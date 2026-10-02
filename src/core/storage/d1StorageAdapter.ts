@@ -713,6 +713,42 @@ export class D1StorageAdapter {
   }
 
   /**
+   * Deletes temporary live observations older than a given cutoff (retention policy, default 24h).
+   * Invariants:
+   * 1. ONLY deletes from `live_observations` table.
+   * 2. NEVER touches verified_market_records, raw_market_feeds, v2_predictions, or evaluation tables.
+   * 3. Retains fresh observations (<= max age).
+   */
+  public async deleteLiveObservationsOlderThan(cutoff: {
+    cutoffIso: string;
+    cutoffDate: string;
+    cutoffTime: string;
+  }): Promise<{ deletedCount: number }> {
+    try {
+      return await this._doDeleteLiveObservationsOlderThan(cutoff);
+    } catch (err: unknown) {
+      if (err && String((err as Error).message || err).includes('no such table')) {
+        return { deletedCount: 0 };
+      }
+      throw err;
+    }
+  }
+
+  private async _doDeleteLiveObservationsOlderThan(cutoff: {
+    cutoffIso: string;
+    cutoffDate: string;
+    cutoffTime: string;
+  }): Promise<{ deletedCount: number }> {
+    const res = await this.db.prepare(`
+      DELETE FROM live_observations
+      WHERE date < ? OR (date = ? AND time < ?) OR timestamp < ?
+    `).bind(cutoff.cutoffDate, cutoff.cutoffDate, cutoff.cutoffTime, cutoff.cutoffIso).run();
+
+    const changes = Number((res as any)?.meta?.changes ?? (res as any)?.changes ?? 0);
+    return { deletedCount: changes };
+  }
+
+  /**
    * Queries stored live observations from D1.
    * Invariants:
    * 1. Strictly isolated by session (AM or PM).
