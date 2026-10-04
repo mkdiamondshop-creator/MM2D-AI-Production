@@ -16,10 +16,24 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        release {
+            if (file("release.keystore").exists()) {
+                storeFile file("release.keystore")
+                storePassword "mm2dandroid"
+                keyAlias "mm2d"
+                keyPassword "mm2dandroid"
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (file("release.keystore").exists()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

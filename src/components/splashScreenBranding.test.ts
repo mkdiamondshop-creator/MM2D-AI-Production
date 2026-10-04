@@ -97,7 +97,9 @@ describe('Android APK Branding & Splash Screen Verification', () => {
     assert.ok(workflowContent.includes('mm2d_logo.png'), 'Workflow must verify launcher icon');
     assert.ok(workflowContent.includes('mm2d_splash.png'), 'Workflow must verify splash background');
     assert.ok(workflowContent.includes('gradle assembleRelease'), 'Workflow must run gradle assembleRelease');
-    assert.ok(workflowContent.includes('release-apk/*.apk'), 'Workflow must upload .apk files');
+    assert.ok(workflowContent.includes('release-apk/mm2d-release.apk'), 'Workflow must output release-apk/mm2d-release.apk');
+    assert.ok(workflowContent.includes('apksigner verify'), 'Workflow must verify APK signature');
+    assert.ok(workflowContent.includes('package: name=\'com.mm2d.app\''), 'Workflow must verify package name');
   });
 
   it('7. Android Gradle project configuration files exist and are correctly configured', () => {
@@ -109,5 +111,30 @@ describe('Android APK Branding & Splash Screen Verification', () => {
     const appGradle = fs.readFileSync(path.resolve('android/app/build.gradle'), 'utf-8');
     assert.ok(appGradle.includes("applicationId \"com.mm2d.app\""), 'Must specify com.mm2d.app applicationId');
     assert.ok(appGradle.includes("release {"), 'Must configure release buildType');
+    assert.ok(appGradle.includes("signingConfigs"), 'Must configure release signingConfigs');
+
+    const manifest = fs.readFileSync(path.resolve('android/app/src/main/AndroidManifest.xml'), 'utf-8');
+    assert.ok(manifest.includes("package=\"com.mm2d.app\""), 'Package name must remain com.mm2d.app');
+  });
+
+  it('8. Native Android launcher icon resources and adaptive foreground are properly configured without circular references', () => {
+    const densities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'];
+    for (const d of densities) {
+      const iconPath = path.resolve(`android/app/src/main/res/mipmap-${d}/ic_launcher.png`);
+      const fgPath = path.resolve(`android/app/src/main/res/mipmap-${d}/ic_launcher_foreground.png`);
+      assert.ok(fs.existsSync(iconPath), `mipmap-${d}/ic_launcher.png must exist`);
+      assert.ok(fs.existsSync(fgPath), `mipmap-${d}/ic_launcher_foreground.png must exist`);
+    }
+
+    const drawableFg = path.resolve('android/app/src/main/res/drawable/ic_launcher_foreground.png');
+    assert.ok(fs.existsSync(drawableFg), 'drawable/ic_launcher_foreground.png must exist');
+
+    const adaptiveXml = fs.readFileSync(path.resolve('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml'), 'utf-8');
+    assert.ok(adaptiveXml.includes('ic_launcher_foreground'), 'Adaptive icon foreground must reference ic_launcher_foreground');
+    assert.ok(!adaptiveXml.includes('@mipmap/ic_launcher"'), 'Adaptive icon must NOT have circular reference to itself');
+
+    const roundXml = fs.readFileSync(path.resolve('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml'), 'utf-8');
+    assert.ok(roundXml.includes('ic_launcher_foreground'), 'Adaptive round icon foreground must reference ic_launcher_foreground');
+    assert.ok(!roundXml.includes('@mipmap/ic_launcher_round"'), 'Adaptive round icon must NOT have circular reference to itself');
   });
 });

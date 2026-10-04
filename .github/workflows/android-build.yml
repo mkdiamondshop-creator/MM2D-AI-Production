@@ -33,12 +33,15 @@ jobs:
 
       - name: Verify MM2D Launcher Icon Assets
         run: |
-          echo "Verifying MM2D launcher icons..."
+          echo "Verifying MM2D launcher icons and adaptive foregrounds..."
           test -f public/mm2d_logo.png || (echo "Missing public/mm2d_logo.png" && exit 1)
           test -f public/icon-192.png || (echo "Missing public/icon-192.png" && exit 1)
           test -f public/icon-512.png || (echo "Missing public/icon-512.png" && exit 1)
           test -f public/manifest.json || (echo "Missing public/manifest.json" && exit 1)
           test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || (echo "Missing mipmap icon" && exit 1)
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png || (echo "Missing foreground icon" && exit 1)
+          test -f android/app/src/main/res/drawable/ic_launcher_foreground.png || (echo "Missing drawable foreground" && exit 1)
+          grep -q "ic_launcher_foreground" android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml || (echo "Adaptive icon must reference ic_launcher_foreground" && exit 1)
           echo "MM2D Launcher Icons verified successfully!"
 
       - name: Verify Splash Background and Animation Assets
@@ -60,6 +63,19 @@ jobs:
         with:
           gradle-version: '8.5'
 
+      - name: Generate Reproducible Release Keystore
+        run: |
+          echo "Generating reproducible release keystore for testing build..."
+          keytool -genkeypair -v \
+            -keystore android/app/release.keystore \
+            -alias mm2d \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass mm2dandroid \
+            -keypass mm2dandroid \
+            -dname "CN=MM2D Thai Market AI, OU=Mobile, O=MM2D, L=Bangkok, C=TH"
+
       - name: Prepare Android Web Assets
         run: |
           echo "Syncing production web build into Android app assets..."
@@ -73,26 +89,48 @@ jobs:
           echo "Building MM2D Android Release APK with Gradle..."
           gradle assembleRelease --stacktrace
 
-      - name: Verify and Stage APK Output
+      - name: Sign, Verify, and Stage Release APK
         run: |
           echo "Locating built APK..."
           mkdir -p release-apk
-          APK_FILE=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
-          if [ -z "$APK_FILE" ]; then
-            echo "ERROR: No .apk file was generated!"
+          APK_BUILT=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_BUILT" ]; then
+            echo "ERROR: No .apk found from Gradle build!"
             exit 1
           fi
-          echo "Generated APK: $APK_FILE"
-          case "$APK_FILE" in
-            *.apk) echo "Confirmed valid .apk extension" ;;
-            *) echo "ERROR: File does not have .apk extension" && exit 1 ;;
-          esac
-          cp "$APK_FILE" release-apk/mm2d-release-unsigned.apk
-          ls -lh release-apk/
+          echo "Found build output: $APK_BUILT"
 
-      - name: Upload Android Release APK
+          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
+          AAPT=$(find $ANDROID_HOME/build-tools -name aapt | sort -V | tail -n 1)
+          echo "Using apksigner: $APKSIGNER"
+          echo "Using aapt: $AAPT"
+
+          # Sign APK with v1, v2, v3 schemes into release-apk/mm2d-release.apk
+          "$APKSIGNER" sign \
+            --ks android/app/release.keystore \
+            --ks-pass pass:mm2dandroid \
+            --key-pass pass:mm2dandroid \
+            --out release-apk/mm2d-release.apk \
+            "$APK_BUILT"
+
+          # Verify that the generated file ends with .apk and exists
+          test -f release-apk/mm2d-release.apk || (echo "ERROR: release-apk/mm2d-release.apk not found!" && exit 1)
+
+          echo "Running apksigner verify..."
+          "$APKSIGNER" verify --verbose release-apk/mm2d-release.apk
+
+          echo "Verifying APK package name is com.mm2d.app..."
+          "$AAPT" dump badging release-apk/mm2d-release.apk | grep "package: name='com.mm2d.app'"
+
+          echo "Verifying launcher icon is embedded in APK..."
+          "$AAPT" dump badging release-apk/mm2d-release.apk | grep "application-icon"
+
+          echo "Final Signed Release APK Staged Successfully:"
+          ls -lh release-apk/mm2d-release.apk
+
+      - name: Upload Signed Android Release APK
         uses: actions/upload-artifact@v4
         with:
           name: mm2d-android-release
-          path: release-apk/*.apk
+          path: release-apk/mm2d-release.apk
           if-no-files-found: error
