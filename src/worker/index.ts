@@ -12,6 +12,7 @@ import {
   CoordinatorSessionOptions,
   ServerSidePredictionResult,
 } from '../core/prediction/serverSideV2Coordinator';
+import { Top10HitMissTracker } from '../core/prediction/top10HitMissTracker';
 
 export interface Env {
   DB: D1Database;
@@ -652,6 +653,32 @@ export default {
           count: predictions.length,
           filter: { date, session, limit },
           predictions,
+        });
+      }
+
+      // GET /api/hit-miss -> Temporary 1-week Top-10 HIT/MISS rolling performance summary (latest 5 trading days)
+      if (pathname === '/api/hit-miss') {
+        const records = await d1.queryVerifiedRecords({ limit: 100 });
+        const settlements = records.filter((r) => Boolean(r.isSettlement) && r.twod && r.twod.length === 2);
+
+        const predictions = await d1.queryV2Predictions({ limit: 30 });
+        const frozenPredictions = predictions.filter((p) => p.isFrozen === 1);
+
+        const tracker = new Top10HitMissTracker('MM2D_WORKER_HIT_MISS', false);
+        const summary = tracker.syncFromExistingData(
+          frozenPredictions.map((p) => ({
+            date: p.date,
+            session: p.session,
+            top10: JSON.parse(p.top10Json || '[]'),
+            isFrozen: true,
+          })),
+          settlements
+        );
+
+        return jsonResponse({
+          success: true,
+          summary,
+          records: tracker.getRecords(),
         });
       }
 

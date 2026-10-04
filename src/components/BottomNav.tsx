@@ -74,25 +74,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </div>
           <span className="text-[10px] mt-1">မှတ်တမ်း (History)</span>
         </button>
-
-        {/* Settings / Diagnostics */}
-        <button
-          type="button"
-          onClick={() => onSelectTab('dev')}
-          className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'dev'
-              ? 'text-cyan-400 font-bold'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <div className="relative">
-            <Sliders className="w-5 h-5" />
-            {activeTab === 'dev' && (
-              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            )}
-          </div>
-          <span className="text-[10px] mt-1">စနစ် (Dev)</span>
-        </button>
       </div>
     </nav>
   );

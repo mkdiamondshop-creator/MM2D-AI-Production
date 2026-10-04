@@ -120,7 +120,7 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
               {shadowRecord.isFrozenAtLock ? (
                 <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3 text-amber-400" />
-                  Final Locked
+                  Final Prediction (Locked)
                 </span>
               ) : liveTickCount <= 1 ? (
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">

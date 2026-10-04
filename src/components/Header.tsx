@@ -1,19 +1,17 @@
 import React from 'react';
-import { RefreshCw, Bell, Sliders, ShieldCheck, Zap } from 'lucide-react';
+import { RefreshCw, Bell, Menu, Zap } from 'lucide-react';
 
 interface HeaderProps {
   loading: boolean;
   onRefresh: () => void;
-  isDevMode: boolean;
-  onToggleDevMode: () => void;
+  onOpenMenu: () => void;
   liveStatus: 'SUCCESS' | 'INSUFFICIENT_LIVE_DATA' | 'LIVE_DATA_STALE' | 'MARKET_CLOSED' | 'SOURCE_UNAVAILABLE';
 }
 
 export const Header: React.FC<HeaderProps> = ({
   loading,
   onRefresh,
-  isDevMode,
-  onToggleDevMode,
+  onOpenMenu,
   liveStatus,
 }) => {
   return (
@@ -94,19 +92,15 @@ export const Header: React.FC<HeaderProps> = ({
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
           </button>
 
-          {/* Dev / User mode toggle */}
+          {/* Hamburger Menu button */}
           <button
             type="button"
-            onClick={onToggleDevMode}
-            title={isDevMode ? 'Switch to User View' : 'Developer Diagnostics'}
-            className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
-              isDevMode
-                ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                : 'bg-slate-900/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-            }`}
+            onClick={onOpenMenu}
+            title="Open Menu (မီနူး)"
+            className="p-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 border border-slate-800 hover:border-slate-700 transition cursor-pointer"
+            aria-label="Open menu"
           >
-            <Sliders className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{isDevMode ? 'Diagnostics' : 'Dev'}</span>
+            <Menu className="w-4 h-4 text-slate-200" />
           </button>
         </div>
       </div>

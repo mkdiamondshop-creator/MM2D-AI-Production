@@ -40,14 +40,22 @@ import { LiveMarketCard } from './components/LiveMarketCard';
 import { PredictionCard } from './components/PredictionCard';
 import { OfficialResultCard } from './components/OfficialResultCard';
 import { EvaluationCard } from './components/EvaluationCard';
+import { Top10HitMissCard } from './components/Top10HitMissCard';
 import { RecentResultsTable } from './components/RecentResultsTable';
+import { MenuDrawer } from './components/MenuDrawer';
+import { AboutModal } from './components/AboutModal';
+import { HotUnseenView } from './components/HotUnseenView';
+import { SetLastDigitSignalView } from './components/SetLastDigitSignalView';
 import { BottomNav, NavTab } from './components/BottomNav';
+import { SplashScreen } from './components/SplashScreen';
 import { MarketSession } from './types/market';
 import { globalShadowTracker } from './core/prediction/autoWeightedV2ShadowTracker';
 import { AutoWeightedV2ShadowValidator } from './core/prediction/autoWeightedV2ShadowValidator';
 import { ShadowSessionRecord } from './types/autoWeightedV2';
 import { globalLiveObservationBuffer } from './core/market/liveObservationBuffer';
 import { DataSufficiencyGate, DataSufficiencyState, DataSufficiencyResult } from './core/market/dataSufficiencyGate';
+import { globalTop10HitMissTracker, RollingPerformanceSummary } from './core/prediction/top10HitMissTracker';
+import { globalSetLastDigitObservationTracker } from './core/prediction/setLastDigitObservationTracker';
 
 LockEngine.setPersistenceHandler((pred) => {
   globalDatasetStorage.saveModelPrediction(pred).catch((err) => {
@@ -66,11 +74,33 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Splash Screen State: displayed on initial app load, auto-dismissed <= 5s
+  const [showSplash, setShowSplash] = useState(true);
+  const [isDataInitialized, setIsDataInitialized] = useState(false);
+
   // User vs Developer Mode toggle (User Mode by default)
   const [isDevMode, setIsDevMode] = useState(false);
 
+  // Menu, About Modal, Hot & Unseen, and SET Last Digit view states
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isHotUnseenView, setIsHotUnseenView] = useState(false);
+  const [isSetLastDigitView, setIsSetLastDigitView] = useState(false);
+
   // Live Clock (Normalized to Bangkok & Yangon timezones)
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  // 1-Week Top-10 HIT/MISS rolling performance summary state
+  const [hitMissSummary, setHitMissSummary] = useState<RollingPerformanceSummary>(() =>
+    globalTop10HitMissTracker.getRollingSummary()
+  );
+
+  useEffect(() => {
+    const unsubscribe = globalTop10HitMissTracker.subscribe((summary) => {
+      setHitMissSummary(summary);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -135,6 +165,41 @@ export default function App() {
         console.warn('Server-side predictions hydration notice:', predHydrateErr);
       }
 
+      // 4c. Synchronize 1-week Top-10 HIT/MISS tracking from existing predictions and verified settlements
+      try {
+        const storedPredictions = await globalDatasetStorage.queryV2Predictions({ limit: 50 });
+        const allRecordedShadow = globalShadowTracker.getAllRecordedSessions();
+
+        const predictionList: Array<{ date: string; session: MarketSession; top10: string[]; isFrozen?: boolean }> = [];
+        for (const p of storedPredictions) {
+          const t10: string[] = JSON.parse(p.top10Json || '[]');
+          if (t10.length > 0) {
+            predictionList.push({
+              date: p.date,
+              session: p.session,
+              top10: t10,
+              isFrozen: p.isFrozen === 1,
+            });
+          }
+        }
+        for (const s of allRecordedShadow) {
+          if (!predictionList.some((p) => p.date === s.targetDate && p.session === s.session)) {
+            predictionList.push({
+              date: s.targetDate,
+              session: s.session,
+              top10: [...s.top10],
+              isFrozen: s.isFrozenAtLock,
+            });
+          }
+        }
+
+        const summary = globalTop10HitMissTracker.syncFromExistingData(predictionList, fetchedRecords);
+        setHitMissSummary(summary);
+        globalSetLastDigitObservationTracker.syncFromOfficialSettlements(fetchedRecords);
+      } catch (hitMissErr) {
+        console.warn('HIT/MISS sync notice:', hitMissErr);
+      }
+
       // 5. Supplemental client polling (Safe secondary source; do not depend on it)
       try {
         const liveRes = await globalLiveSourceAdapter.getLiveMarketSnapshot(todayBkk);
@@ -154,6 +219,7 @@ export default function App() {
       setError(err?.message || 'Failed to load live data');
     } finally {
       setLoading(false);
+      setIsDataInitialized(true);
     }
   };
 
@@ -586,6 +652,8 @@ export default function App() {
 
   const handleSelectNavTab = (tab: NavTab) => {
     setActiveNavTab(tab);
+    setIsHotUnseenView(false);
+    setIsSetLastDigitView(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (tab === 'dev') {
       setIsDevMode(true);
@@ -611,17 +679,58 @@ export default function App() {
 
   return (
     <div id="mm2d-app-root" className="min-h-screen bg-[#0B0E17] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-white">
+      {/* MM2D Production Splash Screen */}
+      {showSplash && (
+        <SplashScreen
+          isInitialized={isDataInitialized}
+          onFinish={() => setShowSplash(false)}
+        />
+      )}
+
       {/* Top Header */}
       <Header
         loading={loading}
         onRefresh={loadData}
-        isDevMode={isDevMode}
-        onToggleDevMode={() => {
-          const next = !isDevMode;
-          setIsDevMode(next);
-          setActiveNavTab(next ? 'dev' : 'home');
-        }}
+        onOpenMenu={() => setIsMenuOpen(true)}
         liveStatus={liveSourceStatus}
+      />
+
+      {/* Slide-out Menu Drawer */}
+      <MenuDrawer
+        isOpen={isMenuOpen}
+        onClose={() => setIsMenuOpen(false)}
+        onSelectSetLastDigit={() => {
+          setIsSetLastDigitView(true);
+          setIsHotUnseenView(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onSelectHotUnseen={() => {
+          setIsHotUnseenView(true);
+          setIsSetLastDigitView(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onSelectAbout={() => setIsAboutOpen(true)}
+        onOpenDevDiagnostics={() => {
+          setIsDevMode(true);
+          setActiveNavTab('dev');
+          setIsHotUnseenView(false);
+          setIsSetLastDigitView(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
+
+      {/* About MM 2D Daily Modal */}
+      <AboutModal
+        isOpen={isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
+        onOpenDevDiagnostics={() => {
+          setIsAboutOpen(false);
+          setIsDevMode(true);
+          setActiveNavTab('dev');
+          setIsHotUnseenView(false);
+          setIsSetLastDigitView(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
 
       {/* Main Container */}
@@ -633,10 +742,27 @@ export default function App() {
           </div>
         )}
 
+        {/* SET Last Digit Signal (V1) Dedicated View */}
+        {isSetLastDigitView && (
+          <SetLastDigitSignalView
+            records={records}
+            onBack={() => setIsSetLastDigitView(false)}
+            currentTime={currentTime}
+          />
+        )}
+
+        {/* Hot & Unseen Numbers View */}
+        {!isSetLastDigitView && isHotUnseenView && (
+          <HotUnseenView
+            records={records}
+            onBack={() => setIsHotUnseenView(false)}
+          />
+        )}
+
         {/* ------------------------------------------------------------- */}
         {/* TAB 1: CONCISE HOME DASHBOARD (NO DUPLICATE FULL LISTS)       */}
         {/* ------------------------------------------------------------- */}
-        {!isDevMode && activeNavTab === 'home' && (
+        {!isSetLastDigitView && !isHotUnseenView && !isDevMode && activeNavTab === 'home' && (
           <div className="space-y-6 pb-20">
             {/* A. Today's Market Date Hero Card */}
             <HeroCard
@@ -714,6 +840,9 @@ export default function App() {
               </div>
             </div>
 
+            {/* 1-Week Rolling Consensus Top-10 HIT/MISS Tracker */}
+            <Top10HitMissCard summary={hitMissSummary} />
+
             {/* H. Compact Evaluation Card (Appears if official result settled) */}
             {activeShadowRecord?.settlementComparison && (
               <EvaluationCard
@@ -726,7 +855,7 @@ export default function App() {
         {/* ------------------------------------------------------------- */}
         {/* TAB 2: DEDICATED TOP-10 VIEW                                  */}
         {/* ------------------------------------------------------------- */}
-        {!isDevMode && activeNavTab === 'top10' && (
+        {!isSetLastDigitView && !isHotUnseenView && !isDevMode && activeNavTab === 'top10' && (
           <div className="space-y-6 pb-20">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
               <div>
@@ -737,8 +866,9 @@ export default function App() {
                   </h1>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Complete AUTO_WEIGHTED_V2 algorithmic probability ranking (ထိပ်တန်း ၁၀ လုံး ခန့်မှန်းချက်)
+                  Complete AUTO_WEIGHTED_V2 algorithmic probability ranking (ထိပ်တန်း ၁၀ လုံး ခန့်မှန်းချက်) &bull; {isSelectedLocked ? 'Final Prediction (Locked)' : 'Early Prediction'}
                 </p>
+                {/* Ensemble Attribution Contract: Dominant Engine: and Supported by 4/4 Engines */}
               </div>
 
               {/* Dedicated AM / PM Selector for Top 10 */}
@@ -768,6 +898,8 @@ export default function App() {
               </div>
             </div>
 
+            <Top10HitMissCard summary={hitMissSummary} />
+
             <V2Top10View
               session={selectedShadowSession}
               shadowRecord={activeShadowRecord}
@@ -779,7 +911,7 @@ export default function App() {
         {/* ------------------------------------------------------------- */}
         {/* TAB 3: DEDICATED HISTORY VIEW                                 */}
         {/* ------------------------------------------------------------- */}
-        {!isDevMode && activeNavTab === 'history' && (
+        {!isSetLastDigitView && !isHotUnseenView && !isDevMode && activeNavTab === 'history' && (
           <div className="space-y-6 pb-20">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
               <div>
@@ -809,7 +941,7 @@ export default function App() {
         {/* ------------------------------------------------------------- */}
         {/* TAB 4 / DEV MODE: DEVELOPER DIAGNOSTICS VIEW                  */}
         {/* ------------------------------------------------------------- */}
-        {(isDevMode || activeNavTab === 'dev') && (
+        {!isSetLastDigitView && !isHotUnseenView && (isDevMode || activeNavTab === 'dev') && (
           <div className="space-y-6 pb-20">
             <div className="flex items-center justify-between bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 shadow-lg">
               <div className="flex items-center gap-2">
