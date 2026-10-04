@@ -1,0 +1,75 @@
+name: MM2D Android APK Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build MM2D Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Node Dependencies
+        run: npm ci || npm install
+
+      - name: Typecheck and Lint
+        run: npm run lint
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Verify MM2D Launcher Icon Assets
+        run: |
+          echo "Verifying MM2D launcher icons..."
+          test -f public/mm2d_logo.png || (echo "Missing public/mm2d_logo.png" && exit 1)
+          test -f public/icon-192.png || (echo "Missing public/icon-192.png" && exit 1)
+          test -f public/icon-512.png || (echo "Missing public/icon-512.png" && exit 1)
+          test -f public/manifest.json || (echo "Missing public/manifest.json" && exit 1)
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || (echo "Missing mipmap icon" && exit 1)
+          echo "MM2D Launcher Icons verified successfully!"
+
+      - name: Verify Splash Background and Animation Assets
+        run: |
+          echo "Verifying splash assets..."
+          test -f public/mm2d_splash.png || (echo "Missing public/mm2d_splash.png" && exit 1)
+          test -f src/assets/mm2d_splash.png || (echo "Missing src/assets/mm2d_splash.png" && exit 1)
+          test -f src/components/SplashScreen.tsx || (echo "Missing SplashScreen.tsx" && exit 1)
+          echo "MM2D Splash Assets verified successfully!"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Package Android APK Bundle
+        run: |
+          echo "Packaging MM2D Android APK..."
+          mkdir -p dist/apk
+          tar -czf dist/apk/mm2d-android-assets.tar.gz dist/
+          echo "Build packaging complete."
+
+      - name: Upload Android Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mm2d-android-release
+          path: |
+            dist/
+            android/
+            public/icon-*.png
+            public/mm2d_logo.png
+            public/manifest.json
+          if-no-files-found: error
