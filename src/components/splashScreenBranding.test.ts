@@ -96,5 +96,18 @@ describe('Android APK Branding & Splash Screen Verification', () => {
     assert.ok(workflowContent.includes('npm ci'), 'Workflow must use npm ci');
     assert.ok(workflowContent.includes('mm2d_logo.png'), 'Workflow must verify launcher icon');
     assert.ok(workflowContent.includes('mm2d_splash.png'), 'Workflow must verify splash background');
+    assert.ok(workflowContent.includes('gradle assembleRelease'), 'Workflow must run gradle assembleRelease');
+    assert.ok(workflowContent.includes('release-apk/*.apk'), 'Workflow must upload .apk files');
+  });
+
+  it('7. Android Gradle project configuration files exist and are correctly configured', () => {
+    assert.ok(fs.existsSync(path.resolve('android/build.gradle')), 'android/build.gradle must exist');
+    assert.ok(fs.existsSync(path.resolve('android/settings.gradle')), 'android/settings.gradle must exist');
+    assert.ok(fs.existsSync(path.resolve('android/app/build.gradle')), 'android/app/build.gradle must exist');
+    assert.ok(fs.existsSync(path.resolve('android/app/src/main/java/com/mm2d/app/MainActivity.java')), 'MainActivity.java must exist');
+
+    const appGradle = fs.readFileSync(path.resolve('android/app/build.gradle'), 'utf-8');
+    assert.ok(appGradle.includes("applicationId \"com.mm2d.app\""), 'Must specify com.mm2d.app applicationId');
+    assert.ok(appGradle.includes("release {"), 'Must configure release buildType');
   });
 });

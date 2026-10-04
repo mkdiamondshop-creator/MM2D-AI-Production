@@ -55,24 +55,44 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Package Android APK Bundle
-        run: |
-          echo "Packaging MM2D Android APK..."
-          mkdir -p build-apk
-          tar -czf build-apk/mm2d-android-assets.tar.gz -C dist .
-          mkdir -p dist/apk
-          cp build-apk/mm2d-android-assets.tar.gz dist/apk/mm2d-android-assets.tar.gz
-          echo "Build packaging complete."
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
 
-      - name: Upload Android Build Artifacts
+      - name: Prepare Android Web Assets
+        run: |
+          echo "Syncing production web build into Android app assets..."
+          mkdir -p android/app/src/main/assets
+          cp -r dist/* android/app/src/main/assets/
+          echo "Web assets synced into Android project."
+
+      - name: Build Android Release APK
+        working-directory: android
+        run: |
+          echo "Building MM2D Android Release APK with Gradle..."
+          gradle assembleRelease --stacktrace
+
+      - name: Verify and Stage APK Output
+        run: |
+          echo "Locating built APK..."
+          mkdir -p release-apk
+          APK_FILE=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: No .apk file was generated!"
+            exit 1
+          fi
+          echo "Generated APK: $APK_FILE"
+          case "$APK_FILE" in
+            *.apk) echo "Confirmed valid .apk extension" ;;
+            *) echo "ERROR: File does not have .apk extension" && exit 1 ;;
+          esac
+          cp "$APK_FILE" release-apk/mm2d-release-unsigned.apk
+          ls -lh release-apk/
+
+      - name: Upload Android Release APK
         uses: actions/upload-artifact@v4
         with:
           name: mm2d-android-release
-          path: |
-            build-apk/mm2d-android-assets.tar.gz
-            dist/
-            android/
-            public/icon-*.png
-            public/mm2d_logo.png
-            public/manifest.json
+          path: release-apk/*.apk
           if-no-files-found: error
