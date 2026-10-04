@@ -23,7 +23,7 @@ jobs:
           cache: 'npm'
 
       - name: Install Node Dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Typecheck and Lint
         run: npm run lint

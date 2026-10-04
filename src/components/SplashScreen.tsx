@@ -120,11 +120,6 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
           <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)] mm2d-dot-pulse-3" />
           <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)] mm2d-dot-pulse-4" />
         </div>
-
-        {/* Subtitle Tagline */}
-        <div className="text-[11px] sm:text-xs text-cyan-100/90 font-medium tracking-wider text-center drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] max-w-xs">
-          Live Market Intelligence for Smarter Insights
-        </div>
       </div>
 
       {/* Scoped CSS animations for shimmer & dots */}

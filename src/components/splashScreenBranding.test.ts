@@ -73,19 +73,27 @@ describe('Android APK Branding & Splash Screen Verification', () => {
     assert.ok(splashCode.includes('Loading...'), 'Must include Loading... text');
     assert.ok(splashCode.includes('mm2d-dot-pulse'), 'Must include animated pulsing dots');
 
-    // Must include tagline from reference
+    // Must NOT duplicate the tagline text on top of the background image
     assert.ok(
-      splashCode.includes('Live Market Intelligence for Smarter Insights'),
-      'Must include the reference tagline'
+      !splashCode.includes('Live Market Intelligence for Smarter Insights'),
+      'Must NOT duplicate the tagline text on top of the background image'
     );
   });
 
-  it('5. GitHub Actions Android APK build workflow is configured', () => {
+  it('5. Dependencies lockfile package-lock.json exists for npm ci in GitHub Actions', () => {
+    const lockfilePath = path.resolve('package-lock.json');
+    assert.ok(fs.existsSync(lockfilePath), 'package-lock.json must exist for npm ci');
+    const stat = fs.statSync(lockfilePath);
+    assert.ok(stat.size > 10000, 'package-lock.json must be populated');
+  });
+
+  it('6. GitHub Actions Android APK build workflow is configured with npm ci and asset verification', () => {
     const workflowPath = path.resolve('.github/workflows/android-build.yml');
     assert.ok(fs.existsSync(workflowPath), 'Android APK build workflow must exist');
 
     const workflowContent = fs.readFileSync(workflowPath, 'utf-8');
     assert.ok(workflowContent.includes('MM2D Android APK Build'), 'Workflow must have correct name');
+    assert.ok(workflowContent.includes('npm ci'), 'Workflow must use npm ci');
     assert.ok(workflowContent.includes('mm2d_logo.png'), 'Workflow must verify launcher icon');
     assert.ok(workflowContent.includes('mm2d_splash.png'), 'Workflow must verify splash background');
   });
