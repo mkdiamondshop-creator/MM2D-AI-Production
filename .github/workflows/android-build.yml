@@ -58,8 +58,10 @@ jobs:
       - name: Package Android APK Bundle
         run: |
           echo "Packaging MM2D Android APK..."
+          mkdir -p build-apk
+          tar -czf build-apk/mm2d-android-assets.tar.gz -C dist .
           mkdir -p dist/apk
-          tar -czf dist/apk/mm2d-android-assets.tar.gz dist/
+          cp build-apk/mm2d-android-assets.tar.gz dist/apk/mm2d-android-assets.tar.gz
           echo "Build packaging complete."
 
       - name: Upload Android Build Artifacts
@@ -67,6 +69,7 @@ jobs:
         with:
           name: mm2d-android-release
           path: |
+            build-apk/mm2d-android-assets.tar.gz
             dist/
             android/
             public/icon-*.png
