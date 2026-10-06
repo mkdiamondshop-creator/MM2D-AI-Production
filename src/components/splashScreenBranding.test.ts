@@ -137,4 +137,15 @@ describe('Android APK Branding & Splash Screen Verification', () => {
     assert.ok(roundXml.includes('ic_launcher_foreground'), 'Adaptive round icon foreground must reference ic_launcher_foreground');
     assert.ok(!roundXml.includes('@mipmap/ic_launcher_round"'), 'Adaptive round icon must NOT have circular reference to itself');
   });
+
+  it('9. Android MainActivity configures WebViewAssetLoader with appassets domain and loads secure asset URL', () => {
+    const mainActivityPath = path.resolve('android/app/src/main/java/com/mm2d/app/MainActivity.java');
+    assert.ok(fs.existsSync(mainActivityPath), 'MainActivity.java must exist');
+
+    const activityCode = fs.readFileSync(mainActivityPath, 'utf-8');
+    assert.ok(activityCode.includes('WebViewAssetLoader'), 'Must use WebViewAssetLoader');
+    assert.ok(activityCode.includes('appassets.androidplatform.net'), 'Must use appassets.androidplatform.net domain');
+    assert.ok(activityCode.includes('https://appassets.androidplatform.net/assets/index.html'), 'Must load appassets URL');
+    assert.ok(activityCode.includes('shouldInterceptRequest'), 'Must intercept requests with asset loader');
+  });
 });
