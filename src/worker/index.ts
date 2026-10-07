@@ -12,6 +12,11 @@ import {
   CoordinatorSessionOptions,
   ServerSidePredictionResult,
 } from '../core/prediction/serverSideV2Coordinator';
+import {
+  ServerSideSetLastDigitCoordinator,
+  CoordinatorSetLastDigitOptions,
+  ServerSideSetLastDigitResult,
+} from '../core/prediction/serverSideSetLastDigitCoordinator';
 import { Top10HitMissTracker } from '../core/prediction/top10HitMissTracker';
 
 export interface Env {
@@ -451,6 +456,22 @@ export async function executeServerSidePredictionCycle(
 }
 
 /**
+ * Unattended server-side SET Last Digit Signal V1 coordinator cycle.
+ * Live analysis during open market ticks, freezing immutable 1-3 candidates at lock.
+ */
+export async function executeServerSideSetLastDigitCycle(
+  env: Env,
+  options?: CoordinatorSetLastDigitOptions
+): Promise<{
+  date: string;
+  amResult?: ServerSideSetLastDigitResult;
+  pmResult?: ServerSideSetLastDigitResult;
+}> {
+  const d1 = new D1StorageAdapter(env.DB);
+  return ServerSideSetLastDigitCoordinator.coordinateActiveCycle(d1, options);
+}
+
+/**
  * Unattended Automatic Live Retention Cleanup
  * Invariants:
  * 1. Live SET + Value data is temporary only.
@@ -518,6 +539,13 @@ export default {
           await executeServerSidePredictionCycle(env);
         } catch (predErr) {
           console.error('[MM2D Worker Cron] Server-side prediction cycle notice:', predErr);
+        }
+
+        // 2b. Unattended server-side SET Last Digit Signal V1 lock and freeze cycle
+        try {
+          await executeServerSideSetLastDigitCycle(env);
+        } catch (setDigitErr) {
+          console.error('[MM2D Worker Cron] SET Last Digit cycle notice:', setDigitErr);
         }
 
         // 3. Official settlement result synchronization
@@ -691,6 +719,67 @@ export default {
         const clockParam = searchParams.get('clock') || undefined;
 
         const results = await executeServerSidePredictionCycle(env, {
+          targetDate,
+          session,
+          forceLock,
+          overrideMarketGate: overrideGate,
+          simulatedClock: clockParam,
+        });
+
+        return jsonResponse({ success: true, ...results });
+      }
+
+      // GET /api/set-last-digit/signal -> Query or coordinate server-side SET Last Digit signal
+      if (pathname === '/api/set-last-digit/signal') {
+        const targetDate = searchParams.get('date') || undefined;
+        const session = (searchParams.get('session') as MarketSession) || undefined;
+        const clockParam = searchParams.get('clock') || undefined;
+        const overrideGate = searchParams.get('overrideGate') === 'true' || searchParams.get('force') === 'true';
+        const forceLock = searchParams.get('forceLock') === 'true';
+
+        if (session) {
+          const result = await ServerSideSetLastDigitCoordinator.coordinateSession(d1, session, {
+            targetDate,
+            simulatedClock: clockParam,
+            overrideMarketGate: overrideGate,
+            forceLock,
+          });
+          return jsonResponse({ success: true, ...result });
+        }
+
+        const results = await ServerSideSetLastDigitCoordinator.coordinateActiveCycle(d1, {
+          targetDate,
+          simulatedClock: clockParam,
+          overrideMarketGate: overrideGate,
+          forceLock,
+        });
+        return jsonResponse({ success: true, ...results });
+      }
+
+      // GET /api/set-last-digit/history -> Query latest stored frozen SET Last Digit signals from D1
+      if (pathname === '/api/set-last-digit/history') {
+        const date = searchParams.get('date') || undefined;
+        const session = (searchParams.get('session') as MarketSession) || undefined;
+        const limitParam = searchParams.get('limit');
+        const limit = limitParam ? parseInt(limitParam, 10) : 10;
+
+        const signals = await d1.querySetLastDigitSignals({ date, session, limit });
+        return jsonResponse({
+          success: true,
+          count: signals.length,
+          signals,
+        });
+      }
+
+      // POST or GET /api/set-last-digit/cycle -> Manual execution trigger for SET Last Digit coordinator
+      if (pathname === '/api/set-last-digit/cycle') {
+        const targetDate = searchParams.get('date') || undefined;
+        const session = (searchParams.get('session') as MarketSession) || undefined;
+        const forceLock = searchParams.get('forceLock') === 'true';
+        const overrideGate = searchParams.get('overrideGate') === 'true' || searchParams.get('force') === 'true';
+        const clockParam = searchParams.get('clock') || undefined;
+
+        const results = await executeServerSideSetLastDigitCycle(env, {
           targetDate,
           session,
           forceLock,

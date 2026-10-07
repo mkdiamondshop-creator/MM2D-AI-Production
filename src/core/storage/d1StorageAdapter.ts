@@ -131,6 +131,38 @@ export interface D1V2PredictionInput {
   settlementComparison?: unknown | null;
 }
 
+export interface D1SetLastDigitRecord {
+  id: string;
+  date: string;
+  session: MarketSession;
+  signalVersion: string;
+  status: string;
+  isFrozen: number;
+  frozenAt: string;
+  candidatesJson: string;
+  primaryDigit: string;
+  observedSet: number | null;
+  liveObservationsCount: number;
+  settlementLastDigit: string | null;
+  settlementStatus: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface D1SetLastDigitInput {
+  date: string;
+  session: MarketSession;
+  status: string;
+  isFrozen: boolean;
+  frozenAt: string;
+  candidates: string[];
+  primaryDigit: string;
+  observedSet?: number | null;
+  liveObservationsCount?: number;
+  settlementLastDigit?: string | null;
+  settlementStatus?: 'HIT' | 'MISS' | null;
+}
+
 export interface D1StorageStats {
   totalVerifiedCount: number;
   latestStoredDate: string | null;
@@ -220,7 +252,25 @@ export class D1StorageAdapter {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )`,
-      `CREATE INDEX IF NOT EXISTS idx_v2_predictions_date_session ON v2_predictions(date, session)`
+      `CREATE INDEX IF NOT EXISTS idx_v2_predictions_date_session ON v2_predictions(date, session)`,
+      `CREATE TABLE IF NOT EXISTS set_last_digit_signals (
+        id TEXT PRIMARY KEY,
+        date TEXT NOT NULL,
+        session TEXT NOT NULL CHECK(session IN ('AM', 'PM')),
+        signal_version TEXT NOT NULL DEFAULT 'SET_LAST_DIGIT_V1',
+        status TEXT NOT NULL,
+        is_frozen INTEGER NOT NULL CHECK(is_frozen IN (0, 1)),
+        frozen_at TEXT NOT NULL,
+        candidates_json TEXT NOT NULL,
+        primary_digit TEXT NOT NULL,
+        observed_set REAL,
+        live_observations_count INTEGER NOT NULL DEFAULT 0,
+        settlement_last_digit TEXT,
+        settlement_status TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_set_last_digit_date_session ON set_last_digit_signals(date, session)`
     ];
 
     for (const sql of stmts) {
@@ -1071,6 +1121,136 @@ export class D1StorageAdapter {
    */
   public async getV2Prediction(date: string, session: MarketSession): Promise<D1V2PredictionRecord | null> {
     const list = await this.queryV2Predictions({ date, session, limit: 1 });
+    return list.length > 0 ? list[0] : null;
+  }
+
+  /**
+   * Stores or updates a frozen SET Last Digit signal in D1.
+   * Minimal persistence: stores only final frozen candidate digits (1-3) and lock metadata.
+   */
+  public async storeSetLastDigitSignal(
+    signal: D1SetLastDigitInput
+  ): Promise<{ inserted: boolean; updated: boolean }> {
+    const id = `set_digit_${signal.date}_${signal.session}`;
+    const now = new Date().toISOString();
+
+    const sql = `
+      INSERT INTO set_last_digit_signals (
+        id, date, session, signal_version, status, is_frozen, frozen_at,
+        candidates_json, primary_digit, observed_set, live_observations_count,
+        settlement_last_digit, settlement_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        is_frozen = excluded.is_frozen,
+        candidates_json = excluded.candidates_json,
+        primary_digit = excluded.primary_digit,
+        observed_set = excluded.observed_set,
+        live_observations_count = excluded.live_observations_count,
+        settlement_last_digit = excluded.settlement_last_digit,
+        settlement_status = excluded.settlement_status,
+        updated_at = excluded.updated_at
+    `;
+
+    await this.db.prepare(sql).bind(
+      id,
+      signal.date,
+      signal.session,
+      'SET_LAST_DIGIT_V1',
+      signal.status,
+      signal.isFrozen ? 1 : 0,
+      signal.frozenAt,
+      JSON.stringify(signal.candidates),
+      signal.primaryDigit,
+      signal.observedSet !== undefined ? signal.observedSet : null,
+      signal.liveObservationsCount || 0,
+      signal.settlementLastDigit || null,
+      signal.settlementStatus || null,
+      now,
+      now
+    ).run();
+
+    return { inserted: true, updated: false };
+  }
+
+  /**
+   * Queries stored SET Last Digit signals from D1.
+   */
+  public async querySetLastDigitSignals(options?: {
+    date?: string;
+    session?: MarketSession;
+    limit?: number;
+  }): Promise<D1SetLastDigitRecord[]> {
+    try {
+      return await this._doQuerySetLastDigitSignals(options);
+    } catch (err: unknown) {
+      if (err && String((err as Error).message || err).includes('no such table')) {
+        await this.ensureSchema();
+        return await this._doQuerySetLastDigitSignals(options);
+      }
+      throw err;
+    }
+  }
+
+  private async _doQuerySetLastDigitSignals(options?: {
+    date?: string;
+    session?: MarketSession;
+    limit?: number;
+  }): Promise<D1SetLastDigitRecord[]> {
+    let sql = 'SELECT * FROM set_last_digit_signals';
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    if (options?.date) {
+      conditions.push('date = ?');
+      params.push(options.date);
+    }
+    if (options?.session) {
+      conditions.push('session = ?');
+      params.push(options.session);
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    sql += ' ORDER BY date DESC, session ASC';
+
+    if (options?.limit && options.limit > 0) {
+      sql += ' LIMIT ?';
+      params.push(options.limit);
+    }
+
+    const { results } = await this.db.prepare(sql).bind(...params).all<Record<string, unknown>>();
+    if (!results || !Array.isArray(results)) return [];
+
+    return results.map((row) => ({
+      id: String(row.id),
+      date: String(row.date),
+      session: row.session as MarketSession,
+      signalVersion: String(row.signal_version || 'SET_LAST_DIGIT_V1'),
+      status: String(row.status),
+      isFrozen: Number(row.is_frozen || 0),
+      frozenAt: String(row.frozen_at || ''),
+      candidatesJson: String(row.candidates_json || '[]'),
+      primaryDigit: String(row.primary_digit || ''),
+      observedSet: row.observed_set !== null && row.observed_set !== undefined ? Number(row.observed_set) : null,
+      liveObservationsCount: Number(row.live_observations_count || 0),
+      settlementLastDigit: row.settlement_last_digit ? String(row.settlement_last_digit) : null,
+      settlementStatus: row.settlement_status ? String(row.settlement_status) : null,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }));
+  }
+
+  /**
+   * Retrieves a specific SET Last Digit signal by date and session.
+   */
+  public async getSetLastDigitSignal(
+    date: string,
+    session: MarketSession
+  ): Promise<D1SetLastDigitRecord | null> {
+    const list = await this.querySetLastDigitSignals({ date, session, limit: 1 });
     return list.length > 0 ? list[0] : null;
   }
 }

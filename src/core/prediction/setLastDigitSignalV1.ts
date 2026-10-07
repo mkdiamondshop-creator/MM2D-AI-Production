@@ -22,11 +22,15 @@ export interface SetLastDigitInput {
   targetDate: string;
   session: MarketSession;
   historicalRecords: VerifiedMarketRecord[];
-  liveObservations?: Array<{ set: number; value: number; time: string; timestamp?: string }>;
+  liveObservations?: Array<{ set: number; value?: number; time: string; timestamp?: string }>;
   currentTime?: Date | string;
 }
 
 export type SetLastDigitStatus =
+  | 'LIVE_SIGNAL'
+  | 'FINAL_SIGNAL'
+  | 'WAITING_FOR_MARKET_OPEN'
+  | 'WAITING_FOR_LIVE_SET'
   | 'READY'
   | 'MARKET_NOT_OPEN'
   | 'LOCKED'
@@ -57,11 +61,11 @@ export interface SetLastDigitResult {
   status: SetLastDigitStatus;
   isLocked: boolean;
   lockTime: string; // "12:00:00" for AM, "16:00:00" for PM
-  candidates: SetLastDigitCandidate[]; // strictly 1 to 3 items when active, [] when closed
+  candidates: SetLastDigitCandidate[]; // strictly 1 to 3 items when active, [] when closed or waiting
   candidateCount: number; // 0 | 1 | 2 | 3
   primaryDigit: string;
   liveSetObserved: number | null;
-  liveValueObserved: number | null;
+  liveValueObserved?: number | null;
   liveObservationCount: number;
   evidenceSummary: {
     dominantCandidate: boolean;
@@ -329,6 +333,41 @@ export class SetLastDigitSignalV1 {
     const isFutureDay = clock.dateStr < targetDate;
     const isBeforeOpen = isToday && clock.timeStr < openTime;
 
+    const targetDayOfWeek = MarketCalendar.getDayOfWeek(targetDate);
+    const formattedTargetDate = `${targetDate} (${SET_DAY_NAMES[targetDayOfWeek]})`;
+
+    // 0c. Market Open Gate: Before session open, strictly output NO candidates
+    if (isBeforeOpen) {
+      return {
+        targetDate,
+        formattedTargetDate,
+        session,
+        signalVersion: 'SET_LAST_DIGIT_V1',
+        status: 'WAITING_FOR_MARKET_OPEN',
+        isLocked: false,
+        lockTime,
+        candidates: [],
+        candidateCount: 0,
+        primaryDigit: '',
+        liveSetObserved: null,
+        liveObservationCount: 0,
+        evidenceSummary: {
+          dominantCandidate: false,
+          topScore: 0,
+          secondaryScore: null,
+          confidenceLevel: 'BALANCED',
+          rationale: `Waiting for market open (${session === 'AM' ? '10:00 AM' : '2:00 PM'} BKK)`,
+        },
+        distribution: [],
+        antiLeakageAudit: {
+          zeroOfficialSettlementUsed: true,
+          zeroPostLockDataUsed: true,
+          zeroLiveTwodUsed: true,
+          isolatedFromV2Ensemble: true,
+        },
+      };
+    }
+
     // 1. Strict Anti-Leakage: Filter historical records strictly before the target session
     const eligibleHistorical = historicalRecords.filter((r) => {
       if (!r.isSettlement || !r.twod || r.twod.length !== 2) return false;
@@ -341,10 +380,9 @@ export class SetLastDigitSignalV1 {
     });
 
     // 2. Strict Pre-Lock Live Observations Filter (Drop post-lock or malformed observations)
+    // Value is strictly NOT used for prediction input. Only valid SET numbers are accepted.
     const eligibleLive = liveObservations.filter((obs) => {
-      if (typeof obs.set !== 'number' || typeof obs.value !== 'number') return false;
-      if (!Number.isFinite(obs.set) || !Number.isFinite(obs.value)) return false;
-      if (obs.set < 100 || obs.value < 10) return false;
+      if (typeof obs.set !== 'number' || !Number.isFinite(obs.set) || obs.set < 100) return false;
       // Cut off at lock boundary time
       if (obs.time && obs.time > lockTime) return false;
       return true;
@@ -355,14 +393,50 @@ export class SetLastDigitSignalV1 {
 
     const latestLive = eligibleLive.length > 0 ? eligibleLive[eligibleLive.length - 1] : null;
     const liveSet = latestLive ? latestLive.set : null;
-    const liveValue = latestLive ? latestLive.value : null;
+
+    // Check if this is historical settlement backfill in observation tracker
+    const hasCompletedHistoricalSettlement = isPastLock && historicalRecords.some(
+      (r) => r.isSettlement && r.date === targetDate && r.session === session
+    );
+
+    // 2b. Insufficient Live SET Check: When no eligible live SET observations exist
+    if (eligibleLive.length === 0 && !hasCompletedHistoricalSettlement) {
+      return {
+        targetDate,
+        formattedTargetDate,
+        session,
+        signalVersion: 'SET_LAST_DIGIT_V1',
+        status: isBeforeOpen ? 'WAITING_FOR_MARKET_OPEN' : 'WAITING_FOR_LIVE_SET',
+        isLocked: isPastLock,
+        lockTime,
+        candidates: [],
+        candidateCount: 0,
+        primaryDigit: '',
+        liveSetObserved: null,
+        liveObservationCount: 0,
+        evidenceSummary: {
+          dominantCandidate: false,
+          topScore: 0,
+          secondaryScore: null,
+          confidenceLevel: 'BALANCED',
+          rationale: 'Insufficient live SET evidence (waiting for live SET observations)',
+        },
+        distribution: [],
+        antiLeakageAudit: {
+          zeroOfficialSettlementUsed: true,
+          zeroPostLockDataUsed: true,
+          zeroLiveTwodUsed: true,
+          isolatedFromV2Ensemble: true,
+        },
+      };
+    }
 
     // 3. Compute Base Statistical Evidence for Digits 0-9
-    // Initial uniform prior: 0.10 for each digit
+    // Initial uniform prior: 1.0 for each digit
     const scores: number[] = new Array(10).fill(1.0);
 
     // Feature A: Historical Session Frequency Prior for SET Last Digit
-    // Reads verified historical SET settlements for this session (AM or PM)
+    // Reads verified historical SET settlements strictly before the target session (AM or PM)
     const sessionHistory = eligibleHistorical.filter((r) => r.session === session);
     const histCounts = new Array(10).fill(0);
     let totalHist = 0;
@@ -420,17 +494,6 @@ export class SetLastDigitSignalV1 {
       }
     }
 
-    // Feature C: SET & Value Decimal Correlation Prior
-    if (liveValue !== null && Number.isFinite(liveValue)) {
-      // Historical joint relationship between Value magnitude and SET last digit
-      const valMod = Math.floor(liveValue) % 10;
-      for (let d = 0; d < 10; d++) {
-        if ((d + valMod) % 2 === 0) {
-          scores[d] += 0.5; // Parity alignment
-        }
-      }
-    }
-
     // 4. Normalize Scores to Probabilities (Sum = 1.0)
     const totalScore = scores.reduce((sum, s) => sum + s, 0);
     const probabilities = scores.map((s) => s / totalScore);
@@ -458,7 +521,7 @@ export class SetLastDigitSignalV1 {
       candidateCount = 1;
       confidenceLevel = 'HIGH';
       dominant = true;
-      rationale = `Strong statistical and live trajectory convergence on single digit ${rankedDigits[0].digit} (${(p0 * 100).toFixed(1)}%).`;
+      rationale = `Strong statistical and live SET convergence on single digit ${rankedDigits[0].digit} (${(p0 * 100).toFixed(1)}%).`;
     } else if (p0 + p1 >= 0.40 && p1 - p2 >= 0.05) {
       // Two candidates meaningfully supported above uncertainty
       candidateCount = 2;
@@ -479,17 +542,7 @@ export class SetLastDigitSignalV1 {
         rank: idx + 1,
       }));
 
-    let status: SetLastDigitResult['status'] = 'READY';
-    if (isPastLock) {
-      status = 'LOCKED';
-    } else if (isBeforeOpen) {
-      status = 'MARKET_NOT_OPEN';
-    } else if (eligibleHistorical.length < 5 && eligibleLive.length === 0) {
-      status = 'INSUFFICIENT_DATA';
-    }
-
-    const targetDayOfWeek = MarketCalendar.getDayOfWeek(targetDate);
-    const formattedTargetDate = `${targetDate} (${SET_DAY_NAMES[targetDayOfWeek]})`;
+    const status: SetLastDigitResult['status'] = isPastLock ? 'FINAL_SIGNAL' : 'LIVE_SIGNAL';
 
     return {
       targetDate,
@@ -503,7 +556,6 @@ export class SetLastDigitSignalV1 {
       candidateCount,
       primaryDigit: selectedCandidates[0].digit,
       liveSetObserved: liveSet,
-      liveValueObserved: liveValue,
       liveObservationCount: eligibleLive.length,
       evidenceSummary: {
         dominantCandidate: dominant,

@@ -195,6 +195,20 @@ export default function App() {
 
         const summary = globalTop10HitMissTracker.syncFromExistingData(predictionList, fetchedRecords);
         setHitMissSummary(summary);
+
+        try {
+          const storedSignals = await globalDatasetStorage.querySetLastDigitSignals({ limit: 20 });
+          if (storedSignals && storedSignals.length > 0) {
+            const formatted = storedSignals.map((s) => ({
+              date: s.date,
+              session: s.session,
+              candidates: JSON.parse(s.candidatesJson || '[]'),
+            }));
+            globalSetLastDigitObservationTracker.syncFromFrozenSignals(formatted, fetchedRecords);
+          }
+        } catch (signalSyncErr) {
+          console.warn('SET Last Digit signals sync notice:', signalSyncErr);
+        }
         globalSetLastDigitObservationTracker.syncFromOfficialSettlements(fetchedRecords);
       } catch (hitMissErr) {
         console.warn('HIT/MISS sync notice:', hitMissErr);

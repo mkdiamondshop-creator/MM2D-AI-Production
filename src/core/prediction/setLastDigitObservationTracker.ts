@@ -1,5 +1,6 @@
 import { MarketSession, VerifiedMarketRecord } from '../../types/market';
 import { SetLastDigitSignalV1, extractSetLastDigit } from './setLastDigitSignalV1';
+import { MarketCalendar } from '../market/marketCalendar';
 
 export type SetLastDigitObservationStatus = 'HIT' | 'MISS';
 
@@ -17,7 +18,7 @@ export interface SetLastDigitObservationMetric {
   hitCount: number;
   total: number;
   hitRatePercent: number;
-  ratioText: string; // e.g. "HIT 3/4"
+  ratioText: string; // e.g. "AM HIT: 3/5"
 }
 
 export interface SetLastDigitObservationSummary {
@@ -31,11 +32,11 @@ export interface SetLastDigitObservationSummary {
 const STORAGE_KEY = 'MM2D_SET_LAST_DIGIT_OBSERVATION_V1';
 
 /**
- * Step 63: SET_LAST_DIGIT_V1 Production Observation Tracker
+ * Step 63 / 65: SET_LAST_DIGIT_V1 Production Observation Tracker
  *
  * Rules:
  * 1. For each completed valid trading session:
- *    - Compare SET_LAST_DIGIT_V1 candidate digit(s) with official SET settlement's last decimal digit.
+ *    - Compare SET_LAST_DIGIT_V1 frozen candidate digit(s) with official SET settlement's last decimal digit.
  *    - If official digit is among candidates -> HIT.
  *    - Otherwise -> MISS.
  * 2. Record only: date, session (AM/PM), candidate digits, official SET last decimal digit, HIT/MISS.
@@ -43,12 +44,13 @@ const STORAGE_KEY = 'MM2D_SET_LAST_DIGIT_OBSERVATION_V1';
  * 4. Never use live.twod (extracts exclusively from official SET index settlement).
  * 5. Keep AM and PM separate.
  * 6. Never evaluate an unfinished session (requires verified settlement).
- * 7. Retention: keeps latest 10 trading days (max 20 sessions); minimal temporary storage.
- * 8. Observation only: does not alter predictions, engines, or models.
+ * 7. Saturday / Sunday / official SET holidays strictly excluded from observation count.
+ * 8. Retention: keeps latest 5 trading days only (max 10 sessions); minimal temporary storage.
+ * 9. Observation only: does not alter predictions, engines, or models.
  */
 export class SetLastDigitObservationTracker {
-  public static readonly MAX_TRADING_DAYS = 10;
-  public static readonly MAX_SESSIONS = 20;
+  public static readonly MAX_TRADING_DAYS = 5;
+  public static readonly MAX_SESSIONS = 10;
 
   private records: Map<string, SetLastDigitObservationRecord> = new Map();
   private isLoaded = false;
@@ -145,6 +147,11 @@ export class SetLastDigitObservationTracker {
 
     const cleanDate = date.trim();
     if (!cleanDate) return null;
+
+    // Reject weekend (Saturday, Sunday) or official holiday
+    if (MarketCalendar.isWeekend(cleanDate) || !MarketCalendar.isTradingDay(cleanDate).isTradingDay) {
+      return null;
+    }
 
     let officialDigit: string | null = null;
 
@@ -277,19 +284,19 @@ export class SetLastDigitObservationTracker {
         hitCount: amHit,
         total: amTotal,
         hitRatePercent: amTotal > 0 ? Math.round((amHit / amTotal) * 1000) / 10 : 0,
-        ratioText: `HIT ${amHit}/${amTotal}`,
+        ratioText: `AM HIT: ${amHit}/5`,
       },
       pm: {
         hitCount: pmHit,
         total: pmTotal,
         hitRatePercent: pmTotal > 0 ? Math.round((pmHit / pmTotal) * 1000) / 10 : 0,
-        ratioText: `HIT ${pmHit}/${pmTotal}`,
+        ratioText: `PM HIT: ${pmHit}/5`,
       },
       overall: {
         hitCount: overallHit,
         total: overallTotal,
         hitRatePercent: overallTotal > 0 ? Math.round((overallHit / overallTotal) * 1000) / 10 : 0,
-        ratioText: `HIT ${overallHit}/${overallTotal}`,
+        ratioText: `TOTAL HIT: ${overallHit}/10`,
       },
       records,
       sessionCount: overallTotal,
@@ -357,6 +364,36 @@ export class SetLastDigitObservationTracker {
       if (prediction.candidates && prediction.candidates.length > 0) {
         const candidateDigits = prediction.candidates.map((c) => c.digit);
         this.recordSession(settlement.date, settlement.session, candidateDigits, settlement);
+      }
+    }
+
+    return this.getSummary();
+  }
+
+  /**
+   * Synchronizes observation records from server-side frozen signals in D1 and verified settlements.
+   * If a signal is frozen and an official settlement exists, records the session with HIT/MISS.
+   */
+  public syncFromFrozenSignals(
+    signals: Array<{ date: string; session: MarketSession; candidates: string[] }>,
+    officialRecords: VerifiedMarketRecord[]
+  ): SetLastDigitObservationSummary {
+    this.loadFromStorage();
+
+    if (!signals || signals.length === 0 || !officialRecords || officialRecords.length === 0) {
+      return this.getSummary();
+    }
+
+    for (const sig of signals) {
+      const key = this.getKey(sig.date, sig.session);
+      if (this.records.has(key)) continue;
+
+      const settlement = officialRecords.find(
+        (r) => Boolean(r.isSettlement) && r.date === sig.date && r.session === sig.session && (r.setRaw || r.setNumeric !== undefined)
+      );
+
+      if (settlement && sig.candidates && sig.candidates.length > 0) {
+        this.recordSession(sig.date, sig.session, sig.candidates, settlement);
       }
     }
 

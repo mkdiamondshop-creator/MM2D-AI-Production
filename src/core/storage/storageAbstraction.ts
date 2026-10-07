@@ -7,10 +7,11 @@ import {
   SyncAuditLog,
 } from '../../types/sync';
 import { StoredModelPrediction, PRODUCTION_MODEL_VERSION } from '../../types/prediction';
-import type { D1LiveObservationRecord, D1V2PredictionRecord, D1V2PredictionInput } from './d1StorageAdapter';
+import type { D1LiveObservationRecord, D1V2PredictionRecord, D1V2PredictionInput, D1SetLastDigitRecord, D1SetLastDigitInput } from './d1StorageAdapter';
+import type { ServerSideSetLastDigitResult } from '../prediction/serverSideSetLastDigitCoordinator';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 
-export type { D1LiveObservationRecord, D1V2PredictionRecord, D1V2PredictionInput } from './d1StorageAdapter';
+export type { D1LiveObservationRecord, D1V2PredictionRecord, D1V2PredictionInput, D1SetLastDigitRecord, D1SetLastDigitInput } from './d1StorageAdapter';
 
 export interface StorageStats {
   totalVerifiedCount: number;
@@ -82,6 +83,9 @@ export interface IDatasetStorage {
   storeV2Prediction(prediction: D1V2PredictionInput): Promise<{ inserted: boolean; updated: boolean; frozen: boolean }>;
   queryV2Predictions(options?: { date?: string; session?: MarketSession; limit?: number }): Promise<D1V2PredictionRecord[]>;
   getV2Prediction(date: string, session: MarketSession): Promise<D1V2PredictionRecord | null>;
+  querySetLastDigitSignals(options?: { date?: string; session?: MarketSession; limit?: number }): Promise<D1SetLastDigitRecord[]>;
+  getSetLastDigitSignal(date: string, session: MarketSession): Promise<D1SetLastDigitRecord | null>;
+  fetchSetLastDigitSignal(options?: { date?: string; session?: MarketSession; clock?: string }): Promise<ServerSideSetLastDigitResult | null>;
   clearAll(): Promise<void>;
 }
 
@@ -130,6 +134,7 @@ const memoryPredictionStore = new Map<string, StoredModelPrediction>();
 const memoryAuditLogs: SyncAuditLog[] = [];
 const memoryLiveObservations: D1LiveObservationRecord[] = [];
 const memoryV2PredictionStore = new Map<string, D1V2PredictionRecord>();
+const memorySetLastDigitStore = new Map<string, D1SetLastDigitRecord>();
 let memoryLiveCheckpoint: LiveSyncCheckpoint = { ...defaultLiveCheckpoint };
 let memoryHistoricalCheckpoint: HistoricalBackfillCheckpoint = { ...defaultHistoricalCheckpoint };
 
@@ -320,6 +325,56 @@ export class D1ApiStorageAdapter {
       throw new Error(data.error || 'Failed to fetch D1 predictions');
     }
     return data.predictions;
+  }
+
+  public async querySetLastDigitSignals(options?: {
+    date?: string;
+    session?: MarketSession;
+    limit?: number;
+  }): Promise<D1SetLastDigitRecord[]> {
+    if (!this.isConfigured()) {
+      throw new Error('D1 API URL is not configured');
+    }
+    const params = new URLSearchParams();
+    if (options?.date) params.append('date', options.date);
+    if (options?.session) params.append('session', options.session);
+    if (options?.limit && options.limit > 0) params.append('limit', options.limit.toString());
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(`${this.baseUrl}/api/set-last-digit/history${query}`);
+    if (!res.ok) {
+      throw new Error(`D1 API SET last digit signals request failed: HTTP ${res.status}`);
+    }
+    const data = (await res.json()) as { success?: boolean; error?: string; signals?: D1SetLastDigitRecord[] };
+    if (!data.success || !Array.isArray(data.signals)) {
+      throw new Error(data.error || 'Failed to fetch D1 SET last digit signals');
+    }
+    return data.signals;
+  }
+
+  public async fetchSetLastDigitSignal(options?: {
+    date?: string;
+    session?: MarketSession;
+    clock?: string;
+  }): Promise<ServerSideSetLastDigitResult | null> {
+    if (!this.isConfigured()) {
+      throw new Error('D1 API URL is not configured');
+    }
+    const params = new URLSearchParams();
+    if (options?.date) params.append('date', options.date);
+    if (options?.session) params.append('session', options.session);
+    if (options?.clock) params.append('clock', options.clock);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(`${this.baseUrl}/api/set-last-digit/signal${query}`);
+    if (!res.ok) {
+      throw new Error(`D1 API SET last digit signal request failed: HTTP ${res.status}`);
+    }
+    const data = (await res.json()) as { success?: boolean; error?: string } & ServerSideSetLastDigitResult;
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to fetch D1 SET last digit signal');
+    }
+    return data;
   }
 }
 
@@ -1384,6 +1439,55 @@ export class DatasetStorageManager implements IDatasetStorage {
   public async getV2Prediction(date: string, session: MarketSession): Promise<D1V2PredictionRecord | null> {
     const list = await this.queryV2Predictions({ date, session, limit: 1 });
     return list.length > 0 ? list[0] : null;
+  }
+
+  public async querySetLastDigitSignals(options?: {
+    date?: string;
+    session?: MarketSession;
+    limit?: number;
+  }): Promise<D1SetLastDigitRecord[]> {
+    await this.init();
+
+    if (this.d1Adapter.isConfigured()) {
+      try {
+        return await this.d1Adapter.querySetLastDigitSignals(options);
+      } catch (err) {
+        console.warn('[DatasetStorageManager] Remote D1 SET last digit query failed, falling back to local store:', err);
+      }
+    }
+
+    let results = Array.from(memorySetLastDigitStore.values());
+    if (options?.date) {
+      results = results.filter((r) => r.date === options.date);
+    }
+    if (options?.session) {
+      results = results.filter((r) => r.session === options.session);
+    }
+    results.sort((a, b) => b.date.localeCompare(a.date) || a.session.localeCompare(b.session));
+    if (options?.limit && options.limit > 0) {
+      results = results.slice(0, options.limit);
+    }
+    return results;
+  }
+
+  public async getSetLastDigitSignal(date: string, session: MarketSession): Promise<D1SetLastDigitRecord | null> {
+    const list = await this.querySetLastDigitSignals({ date, session, limit: 1 });
+    return list.length > 0 ? list[0] : null;
+  }
+
+  public async fetchSetLastDigitSignal(options?: {
+    date?: string;
+    session?: MarketSession;
+    clock?: string;
+  }): Promise<ServerSideSetLastDigitResult | null> {
+    if (this.d1Adapter.isConfigured()) {
+      try {
+        return await this.d1Adapter.fetchSetLastDigitSignal(options);
+      } catch (err) {
+        console.warn('[DatasetStorageManager] Remote D1 fetchSetLastDigitSignal failed:', err);
+      }
+    }
+    return null;
   }
 
   public async clearAll(): Promise<void> {

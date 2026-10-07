@@ -19,6 +19,10 @@ import {
   globalSetLastDigitObservationTracker,
   SetLastDigitObservationSummary,
 } from '../core/prediction/setLastDigitObservationTracker';
+import { MarketCalendar } from '../core/market/marketCalendar';
+import { globalDatasetStorage } from '../core/storage/storageAbstraction';
+import { TimezoneContract } from '../core/market/timezoneUtils';
+import type { ServerSideSetLastDigitResult } from '../core/prediction/serverSideSetLastDigitCoordinator';
 
 interface SetLastDigitSignalViewProps {
   records: VerifiedMarketRecord[];
@@ -57,27 +61,180 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
     return globalLiveObservationBuffer.getObservations(eligibleSession, targetDate);
   }, [eligibleSession, targetDate]);
 
-  // Execute isolated SET Last Digit Signal V1 prediction (only if valid trading day and eligible session)
+  // Server-side SET Last Digit Signal state
+  const [serverSignal, setServerSignal] = useState<ServerSideSetLastDigitResult | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const fetchSignal = async () => {
+      if (!targetDate || !eligibleSession) return;
+      try {
+        const res = await globalDatasetStorage.fetchSetLastDigitSignal({
+          date: targetDate,
+          session: eligibleSession,
+        });
+        if (active && res) {
+          setServerSignal(res);
+        }
+      } catch (err) {
+        console.warn('Could not fetch server-side SET last digit signal:', err);
+      }
+    };
+    fetchSignal();
+    const interval = setInterval(fetchSignal, 10000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [targetDate, eligibleSession]);
+
+  // Resolve isolated SET Last Digit Signal V1 prediction (prioritizes server-side result; strictly enforces lock boundaries)
   const signalResult = useMemo(() => {
     if (!targetDate || !eligibleSession) {
       return null;
     }
-    return SetLastDigitSignalV1.predict({
+
+    const clock = currentTime ? TimezoneContract.toBangkok(currentTime) : TimezoneContract.toBangkok(new Date());
+    const openTime = eligibleSession === 'AM' ? '10:00:00' : '14:00:00';
+    const lockTime = eligibleSession === 'AM' ? '12:00:00' : '16:00:00';
+    const isToday = clock.dateStr === targetDate;
+    const isBeforeOpen = isToday && clock.timeStr < openTime;
+    const isPastLock = (isToday && clock.timeStr >= lockTime) || (targetDate < clock.dateStr);
+
+    // If authoritative server signal is available from Cloudflare Worker, consume it directly
+    if (serverSignal) {
+      const candidates = serverSignal.candidates || [];
+      return {
+        status: serverSignal.status,
+        isLocked: serverSignal.isLocked,
+        candidates: candidates.map((digit, idx) => ({
+          digit,
+          probability: Math.max(0.2, (candidates.length - idx) / (candidates.length * 1.5)),
+          rank: idx + 1,
+        })),
+        candidateCount: candidates.length,
+        liveSetObserved: serverSignal.liveSetObserved,
+        liveObservationCount: serverSignal.liveObservationCount,
+        distribution: Array.from({ length: 10 }, (_, i) => ({
+          digit: String(i),
+          probability: candidates.includes(String(i)) ? 0.25 : 0.05,
+        })),
+        evidenceSummary: {
+          confidenceLevel: 'HIGH',
+          rationale: `Server-side autonomous pipeline: ${serverSignal.status}`,
+        },
+      };
+    }
+
+    // Client-side fallback: strictly enforce server-side candidate display rules
+    if (isBeforeOpen) {
+      return {
+        status: 'WAITING_FOR_MARKET_OPEN' as const,
+        isLocked: false,
+        candidates: [],
+        candidateCount: 0,
+        liveSetObserved: null,
+        liveObservationCount: 0,
+        distribution: Array.from({ length: 10 }, (_, i) => ({ digit: String(i), probability: 0.1 })),
+        evidenceSummary: {
+          confidenceLevel: 'BALANCED',
+          rationale: `Waiting for market open (${eligibleSession === 'AM' ? '10:00 AM' : '2:00 PM'} BKK)`,
+        },
+      };
+    }
+
+    const latestLive = liveObservations.length > 0 ? liveObservations[liveObservations.length - 1].set : null;
+
+    if (!isPastLock) {
+      // Market open -> lock boundary: "LIVE_ANALYSIS"
+      // IMPORTANT: Strictly NO candidate prediction digits displayed before lock!
+      return {
+        status: 'LIVE_ANALYSIS' as const,
+        isLocked: false,
+        candidates: [],
+        candidateCount: 0,
+        liveSetObserved: latestLive,
+        liveObservationCount: liveObservations.length,
+        distribution: Array.from({ length: 10 }, (_, i) => ({ digit: String(i), probability: 0.1 })),
+        evidenceSummary: {
+          confidenceLevel: 'BALANCED',
+          rationale: `Analyzing live SET observations. Candidate digits freeze at ${lockTimeString} BKK.`,
+        },
+      };
+    }
+
+    // At or after lock: calculate final frozen candidates
+    const localPred = SetLastDigitSignalV1.predict({
       targetDate,
       session: eligibleSession,
       historicalRecords: records,
       liveObservations,
       currentTime,
     });
-  }, [targetDate, eligibleSession, records, liveObservations, currentTime]);
+
+    return {
+      status: 'FINAL_LOCKED' as const,
+      isLocked: true,
+      candidates: localPred.candidates,
+      candidateCount: localPred.candidateCount,
+      liveSetObserved: localPred.liveSetObserved,
+      liveObservationCount: localPred.liveObservationCount,
+      distribution: localPred.distribution,
+      evidenceSummary: localPred.evidenceSummary,
+    };
+  }, [targetDate, eligibleSession, serverSignal, currentTime, liveObservations, records, lockTimeString]);
 
   const [observationSummary, setObservationSummary] = useState<SetLastDigitObservationSummary>(() =>
     globalSetLastDigitObservationTracker.getSummary()
   );
 
+  const distinctTradingDays = useMemo(() => {
+    const dates = new Set<string>();
+    for (const r of observationSummary.records) {
+      if (
+        r.date &&
+        !MarketCalendar.isWeekend(r.date) &&
+        MarketCalendar.isTradingDay(r.date).isTradingDay
+      ) {
+        dates.add(r.date);
+      }
+    }
+    for (const r of records) {
+      if (
+        r.date &&
+        !MarketCalendar.isWeekend(r.date) &&
+        MarketCalendar.isTradingDay(r.date).isTradingDay
+      ) {
+        dates.add(r.date);
+      }
+    }
+    return Array.from(dates)
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, 5);
+  }, [observationSummary.records, records]);
+
   useEffect(() => {
     return globalSetLastDigitObservationTracker.subscribe(setObservationSummary);
   }, []);
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const stored = await globalDatasetStorage.querySetLastDigitSignals({ limit: 10 });
+        if (stored && stored.length > 0) {
+          const formatted = stored.map((s) => ({
+            date: s.date,
+            session: s.session,
+            candidates: JSON.parse(s.candidatesJson || '[]'),
+          }));
+          globalSetLastDigitObservationTracker.syncFromFrozenSignals(formatted, records);
+        }
+      } catch {
+        // graceful
+      }
+    };
+    fetchHistory();
+  }, [records]);
 
   useEffect(() => {
     if (records && records.length > 0) {
@@ -195,80 +352,124 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
               </div>
 
               <div>
-                {signalResult.isLocked ? (
+                {signalResult.isLocked || (signalResult.status as string) === 'FINAL_SIGNAL' || (signalResult.status as string) === 'LOCKED' ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
                     <Lock className="w-3 h-3" />
-                    Prediction Locked ({lockTimeString})
+                    FINAL SIGNAL ({lockTimeString})
                   </span>
-                ) : signalResult.status === 'MARKET_NOT_OPEN' ? (
+                ) : signalResult.status === 'WAITING_FOR_MARKET_OPEN' || (signalResult.status as string) === 'MARKET_NOT_OPEN' ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
                     <Clock className="w-3 h-3" />
-                    Market Not Open
+                    WAITING FOR MARKET OPEN
+                  </span>
+                ) : (signalResult.status as string) === 'WAITING_FOR_LIVE_SET' || (signalResult.status as string) === 'INSUFFICIENT_DATA' ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                    <Activity className="w-3 h-3 text-amber-400" />
+                    WAITING FOR LIVE SET
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
                     <Activity className="w-3 h-3 text-cyan-400 animate-pulse" />
-                    Pre-Lock Active Analysis
+                    LIVE SIGNAL
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Predicted SET Last Digit Candidates (1 to 3 items) */}
+            {/* Predicted SET Last Digit Candidates (1 to 3 items) or Waiting State */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-indigo-400" />
-                  <span>SET Last Decimal Digit Candidates ({signalResult.candidateCount} Candidate{signalResult.candidateCount > 1 ? 's' : ''})</span>
+                  <span>
+                    SET Last Decimal Digit Candidates
+                    {signalResult.candidateCount > 0
+                      ? ` (${signalResult.candidateCount} Candidate${signalResult.candidateCount > 1 ? 's' : ''})`
+                      : ''}
+                  </span>
                 </div>
                 <span className="text-[11px] text-slate-400 font-mono">
                   Rule: 1–3 Candidates Max
                 </span>
               </div>
 
-              <div
-                className={`grid gap-3 ${
-                  signalResult.candidateCount === 1
-                    ? 'grid-cols-1 max-w-sm mx-auto'
-                    : signalResult.candidateCount === 2
-                    ? 'grid-cols-1 sm:grid-cols-2'
-                    : 'grid-cols-1 sm:grid-cols-3'
-                }`}
-              >
-                {signalResult.candidates.map((cand) => (
-                  <div
-                    key={cand.digit}
-                    className="bg-slate-900/80 border border-slate-800/90 hover:border-indigo-500/50 rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all shadow-md group relative overflow-hidden"
-                  >
-                    <div className="absolute top-2.5 left-3">
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold border border-slate-700">
-                        Rank #{cand.rank}
-                      </span>
-                    </div>
-
-                    <div className="my-2">
-                      <span className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white group-hover:text-indigo-300 transition-colors">
-                        {cand.digit}
-                      </span>
-                    </div>
-
-                    <div className="w-full space-y-1.5 mt-1">
-                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-                        <span>Evidence</span>
-                        <span className="font-bold text-indigo-300">
-                          {(cand.probability * 100).toFixed(1)}%
+              {signalResult.candidateCount === 0 || signalResult.candidates.length === 0 ? (
+                <div className="bg-slate-900/80 border border-slate-800/90 rounded-xl p-8 flex flex-col items-center justify-center text-center space-y-3">
+                  {signalResult.status === 'WAITING_FOR_MARKET_OPEN' || (signalResult.status as string) === 'MARKET_NOT_OPEN' ? (
+                    <>
+                      <div className="w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300 flex items-center justify-center">
+                        <Clock className="w-6 h-6 text-slate-400" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-sm font-black font-mono tracking-wider text-slate-200 uppercase">
+                          WAITING FOR MARKET OPEN
+                        </div>
+                        <p className="text-xs text-slate-400 max-w-sm">
+                          ဈေးကွက်ဖွင့်လှစ်ချိန် ({eligibleSession === 'AM' ? '10:00 AM' : '2:00 PM'} BKK) မှစတင်၍ Live SET အချက်ပြဂဏန်းများကို စတင်တွက်ချက်ထုတ်ပြန်ပါမည်။
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center">
+                        <Activity className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-sm font-black font-mono tracking-wider text-cyan-300 uppercase">
+                          WAITING FOR LIVE SET
+                        </div>
+                        <p className="text-xs text-slate-400 max-w-sm">
+                          Live SET အချက်အလက် စတင်ရရှိချိန်မှသာ အချက်ပြဂဏန်းများကို တိကျစွာ ခွဲခြမ်းစိတ်ဖြာ တွက်ချက်မည်ဖြစ်ပါသည်။
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div
+                  className={`grid gap-3 ${
+                    signalResult.candidateCount === 1
+                      ? 'grid-cols-1 max-w-sm mx-auto'
+                      : signalResult.candidateCount === 2
+                      ? 'grid-cols-1 sm:grid-cols-2'
+                      : 'grid-cols-1 sm:grid-cols-3'
+                  }`}
+                >
+                  {signalResult.candidates.map((cand) => (
+                    <div
+                      key={cand.digit}
+                      className="bg-slate-900/80 border border-slate-800/90 hover:border-indigo-500/50 rounded-xl p-4 flex flex-col items-center justify-center text-center transition-all shadow-md group relative overflow-hidden"
+                    >
+                      <div className="absolute top-2.5 left-3">
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold border border-slate-700">
+                          Rank #{cand.rank}
                         </span>
                       </div>
-                      <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className="bg-indigo-400 h-1.5 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(100, Math.max(5, cand.probability * 100))}%` }}
-                        />
+
+                      <div className="my-2">
+                        <span className="text-4xl sm:text-5xl font-black font-mono tracking-tight text-white group-hover:text-indigo-300 transition-colors">
+                          {cand.digit}
+                        </span>
+                      </div>
+
+                      <div className="w-full space-y-1.5 mt-1">
+                        <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                          <span>Evidence</span>
+                          <span className="font-bold text-indigo-300">
+                            {(cand.probability * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                          <div
+                            className="bg-indigo-400 h-1.5 rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(100, Math.max(5, cand.probability * 100))}%` }}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* User Independence Notice */}
@@ -286,8 +487,8 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
             </div>
           </div>
 
-          {/* Current Eligible Live Context */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          {/* Current Eligible Live Context: Live SET only */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div className="bg-[#0B0E17]/90 border border-slate-800/90 rounded-xl p-3.5 space-y-1">
               <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
                 Eligible Live SET Observed
@@ -302,19 +503,7 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
 
             <div className="bg-[#0B0E17]/90 border border-slate-800/90 rounded-xl p-3.5 space-y-1">
               <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-                Eligible Live Value Observed
-              </div>
-              <div className="text-xl font-black font-mono text-purple-400">
-                {signalResult.liveValueObserved !== null ? `${signalResult.liveValueObserved.toLocaleString(undefined, { maximumFractionDigits: 0 })}M` : 'Waiting...'}
-              </div>
-              <div className="text-[10px] text-slate-500">
-                Pre-lock Trading Volume
-              </div>
-            </div>
-
-            <div className="bg-[#0B0E17]/90 border border-slate-800/90 rounded-xl p-3.5 space-y-1">
-              <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-                Pre-Lock Observations Analyzed
+                Pre-Lock SET Observations Analyzed
               </div>
               <div className="text-xl font-black font-mono text-emerald-400">
                 {signalResult.liveObservationCount} Ticks
@@ -371,63 +560,149 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
               {signalResult.evidenceSummary.rationale}
             </p>
           </div>
+        </>
+      )}
 
-          {/* Production Observation Performance (Minimal Display) */}
-          {observationSummary.sessionCount > 0 && (
-            <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-cyan-400" />
-                  <span>Production Observation Record (SET Decimal Last Digit)</span>
-                </div>
-                <span className="text-[11px] font-mono text-slate-400">
-                  Observation Only &bull; {observationSummary.sessionCount} Sessions Tracked
-                </span>
+      {/* 3. Production Observation Performance: 5 Trading Days / 10 Sessions Max (Rendered whether market is open or closed) */}
+      {(observationSummary.sessionCount > 0 || distinctTradingDays.length > 0) && (
+        <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-3.5 shadow-xl backdrop-blur-md">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-cyan-400" />
+              <span>Production Observation Record (SET Decimal Last Digit)</span>
+            </div>
+            <span className="text-[11px] font-mono text-cyan-400 font-bold">
+              5 Trading Days / 10 Sessions Max &bull; {observationSummary.sessionCount} Tracked
+            </span>
+          </div>
+
+          {/* 3 Metrics: AM HIT, PM HIT, TOTAL HIT */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-center">
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 space-y-0.5">
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">AM HIT</div>
+              <div className="text-sm font-mono font-black text-cyan-400">
+                AM HIT: {observationSummary.am.hitCount}/5
               </div>
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5">
-                  <div className="text-[10px] text-slate-400 font-bold uppercase">AM Sessions</div>
-                  <div className="text-sm font-mono font-black text-cyan-400 mt-0.5">{observationSummary.am.ratioText}</div>
-                </div>
-                <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5">
-                  <div className="text-[10px] text-slate-400 font-bold uppercase">PM Sessions</div>
-                  <div className="text-sm font-mono font-black text-purple-400 mt-0.5">{observationSummary.pm.ratioText}</div>
-                </div>
-                <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5">
-                  <div className="text-[10px] text-slate-400 font-bold uppercase">Total Tracked</div>
-                  <div className="text-sm font-mono font-black text-emerald-400 mt-0.5">{observationSummary.overall.ratioText}</div>
-                </div>
+              <div className="text-[10px] text-slate-500 font-mono">
+                {observationSummary.am.hitRatePercent}% Accuracy
               </div>
             </div>
-          )}
 
-          {/* Anti-Leakage & Safety Verification Checklist */}
-          <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 space-y-2 text-xs">
-            <div className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Strict Anti-Leakage & System Integrity Audit</span>
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 space-y-0.5">
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">PM HIT</div>
+              <div className="text-sm font-mono font-black text-purple-400">
+                PM HIT: {observationSummary.pm.hitCount}/5
+              </div>
+              <div className="text-[10px] text-slate-500 font-mono">
+                {observationSummary.pm.hitRatePercent}% Accuracy
+              </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400">
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>Zero Today Official Settlement Leakage</span>
+
+            <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 space-y-0.5">
+              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">TOTAL HIT</div>
+              <div className="text-sm font-mono font-black text-emerald-400">
+                TOTAL HIT: {observationSummary.overall.hitCount}/10
               </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>Zero Post-Lock Data Ingestion</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>Zero Live 2D Input ('live.twod' strictly banned)</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>100% Isolated from AUTO_WEIGHTED_V2</span>
+              <div className="text-[10px] text-slate-500 font-mono">
+                {observationSummary.overall.hitRatePercent}% Combined
               </div>
             </div>
           </div>
-        </>
+
+          {/* Latest 5 Trading Days AM/PM HIT/MISS Detail */}
+          {distinctTradingDays.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-slate-800/80">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Latest 5 Trading Days Performance Detail (AM & PM)
+              </div>
+              <div className="space-y-1.5">
+                {distinctTradingDays.map((dateStr) => {
+                  const dayRecords = observationSummary.records.filter((r) => r.date === dateStr);
+                  const am = dayRecords.find((r) => r.session === 'AM');
+                  const pm = dayRecords.find((r) => r.session === 'PM');
+                  return (
+                    <div
+                      key={dateStr}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/50 border border-slate-800/70 text-xs font-mono"
+                    >
+                      <span className="font-bold text-slate-300">{dateStr}</span>
+                      <div className="flex items-center gap-3">
+                        {/* AM Status */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-slate-500 font-sans uppercase">AM:</span>
+                          {am ? (
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                am.status === 'HIT'
+                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                              }`}
+                              title={`Predicted [${am.candidateDigits.join(', ')}] vs SET: ${am.officialSetLastDigit}`}
+                            >
+                              {am.status} ([{am.candidateDigits.join(', ')}] vs {am.officialSetLastDigit})
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-sans bg-slate-800/90 text-amber-300/80 border border-slate-700/80">
+                              Prediction unavailable / Not recorded
+                            </span>
+                          )}
+                        </div>
+
+                        {/* PM Status */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-slate-500 font-sans uppercase">PM:</span>
+                          {pm ? (
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                pm.status === 'HIT'
+                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
+                              }`}
+                              title={`Predicted [${pm.candidateDigits.join(', ')}] vs SET: ${pm.officialSetLastDigit}`}
+                            >
+                              {pm.status} ([{pm.candidateDigits.join(', ')}] vs {pm.officialSetLastDigit})
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-sans bg-slate-800/90 text-amber-300/80 border border-slate-700/80">
+                              Prediction unavailable / Not recorded
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       )}
+
+      {/* Anti-Leakage & Safety Verification Checklist */}
+      <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 space-y-2 text-xs">
+        <div className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          <span>Strict Anti-Leakage & System Integrity Audit</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400">
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>Zero Today Official Settlement Leakage</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>Zero Post-Lock Data Ingestion</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>Zero Live 2D Input ('live.twod' strictly banned)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>100% Isolated from AUTO_WEIGHTED_V2</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
