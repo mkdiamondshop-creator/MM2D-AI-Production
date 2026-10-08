@@ -628,20 +628,20 @@ export default function App() {
     }
     if (sufficiencyState === 'REFINING') {
       return {
-        label: `Refining (${obsCount} Ticks)`,
+        label: `Live SET/Value စစ်ဆေးဆဲ (${obsCount} Ticks)`,
         colorClass: 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20',
         icon: <Activity className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />,
       };
     }
     if (sufficiencyState === 'EARLY_PREDICTION_READY') {
       return {
-        label: 'Early Prediction',
+        label: 'Live အချက်အလက် စစ်ဆေးဆဲ',
         colorClass: 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20',
-        icon: <Sparkles className="w-3.5 h-3.5" />,
+        icon: <Activity className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />,
       };
     }
     return {
-      label: 'Waiting for Live Data',
+      label: 'Live SET စောင့်ဆိုင်းဆဲ',
       colorClass: 'bg-blue-500/10 text-blue-300 border border-blue-500/20',
       icon: <Clock className="w-3.5 h-3.5 animate-pulse" />,
     };
@@ -762,6 +762,7 @@ export default function App() {
             records={records}
             onBack={() => setIsSetLastDigitView(false)}
             currentTime={currentTime}
+            liveSnapshot={liveSnapshot}
           />
         )}
 
@@ -880,7 +881,7 @@ export default function App() {
                   </h1>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Complete AUTO_WEIGHTED_V2 algorithmic probability ranking (ထိပ်တန်း ၁၀ လုံး ခန့်မှန်းချက်) &bull; {isSelectedLocked ? 'Final Prediction (Locked)' : 'Early Prediction'}
+                  MM2D V3 Joint SET &times; Value Trajectory probability ranking (ထိပ်တန်း ၁၀ လုံး ခန့်မှန်းချက်) &bull; {isSelectedLocked ? 'အတည်ပြုပြီး Final Prediction' : 'Lock Time တွင် ထုတ်ပြန်မည်'}
                 </p>
                 {/* Ensemble Attribution Contract: Dominant Engine: and Supported by 4/4 Engines */}
               </div>

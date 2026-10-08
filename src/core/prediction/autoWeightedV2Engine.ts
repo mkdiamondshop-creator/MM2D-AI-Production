@@ -26,6 +26,7 @@ import {
   ValueTo2DRelationshipEngine,
 } from './setValueRelationshipLab';
 import { LiveObservationBuffer, globalLiveObservationBuffer } from '../market/liveObservationBuffer';
+import { Mm2dV3PredictionEngine } from './mm2dV3PredictionEngine';
 
 /**
  * Standard SHA-256 / Deterministic Hash Helper
@@ -655,7 +656,18 @@ export class AutoWeightedV2Engine {
       rawEnsembleProbs[i] = blended;
     }
 
-    const normEnsembleProbs = normalizeProbabilities(rawEnsembleProbs);
+    // 4b. MM2D V3 Joint SET x Value Trajectory Modeling:
+    // Generate official settlement digit joint prediction from live trajectories + historical empirical joint.
+    // Production Requirement: 100% of final production probabilities and rankings come strictly from V3.
+    // Legacy V2 probability blend is completely removed (0% legacy influence).
+    const v3Output = Mm2dV3PredictionEngine.predict({
+      targetDate,
+      session,
+      historicalRecords: safeRecords,
+      liveObservations: sanitizedLiveFeed,
+    });
+
+    const normEnsembleProbs = v3Output.probabilities;
 
     // 5. Construct Detailed Candidates with Multi-Engine Support Attribution
     const candidates: AutoWeightedV2Candidate[] = [];
@@ -740,7 +752,7 @@ export class AutoWeightedV2Engine {
       ? (typeof latestLiveObs.value === 'number' ? latestLiveObs.value : parseFloat(String(latestLiveObs.value).replace(/,/g, '')))
       : (checkRec?.valueNumeric || engineOutputs.SESSION_SPECIFIC_SET_VALUE_V1.observedPreLockValue);
 
-    const auditDetails = `AUTO_WEIGHTED_V2 synthesized 4 engines for ${session} (${hasSufficientEvidence ? 'Performance Weighted' : 'Conservative Uniform Prior'}). Evidence count: ${historicalEvals.length / 4}. Weights: [SESSION_SPECIFIC: ${(weights.SESSION_SPECIFIC_SET_VALUE_V1 * 100).toFixed(1)}%, JOINT: ${(weights.SET_VALUE_JOINT_RELATIONSHIP_V1 * 100).toFixed(1)}%, VALUE_2D: ${(weights.VALUE_TO_2D_RELATIONSHIP_V1 * 100).toFixed(1)}%, BASELINE: ${(weights.ALL_TIME_FREQUENCY_V1 * 100).toFixed(1)}%]`;
+    const auditDetails = `MM2D V3 Joint Architecture synthesized SET x Value Trajectories + Empirical Joint Matrix for ${session} (${hasSufficientEvidence ? 'Performance Weighted' : 'Conservative Uniform Prior'}). Evidence count: ${historicalEvals.length / 4}. Trajectory Ticks: ${sanitizedLiveFeed.length}. Weights: [SESSION_SPECIFIC: ${(weights.SESSION_SPECIFIC_SET_VALUE_V1 * 100).toFixed(1)}%, JOINT: ${(weights.SET_VALUE_JOINT_RELATIONSHIP_V1 * 100).toFixed(1)}%, VALUE_2D: ${(weights.VALUE_TO_2D_RELATIONSHIP_V1 * 100).toFixed(1)}%, BASELINE: ${(weights.ALL_TIME_FREQUENCY_V1 * 100).toFixed(1)}%]`;
 
     return {
       modelId: 'AUTO_WEIGHTED_V2',

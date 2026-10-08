@@ -10,6 +10,9 @@ import {
   BarChart3,
   Check,
   X,
+  Clock,
+  Activity,
+  Lock,
 } from 'lucide-react';
 import { MarketSession } from '../types/market';
 import {
@@ -84,10 +87,10 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
       <div id="v2-shadow-top10-empty" className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 text-center">
         <div className="flex items-center justify-center space-x-2 text-slate-400 mb-2">
           <Layers className="w-5 h-5 text-indigo-400" />
-          <span className="font-semibold text-slate-200">AUTO_WEIGHTED_V2</span>
+          <span className="font-semibold text-slate-200">MM2D V3</span>
         </div>
         <p className="text-sm text-slate-400">
-          Ensemble awaiting valid market data for today's session.
+          V3 joint architecture awaiting valid market data for today's session.
         </p>
       </div>
     );
@@ -115,26 +118,23 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
                 (ထိပ်တန်း ၁၀ ဦးစားပေး)
               </span>
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
-                AUTO_WEIGHTED_V2
+                MM2D_V3
               </span>
               {shadowRecord.isFrozenAtLock ? (
                 <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3 text-amber-400" />
-                  Final Prediction (Locked)
-                </span>
-              ) : liveTickCount <= 1 ? (
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                  Early Prediction
+                  Final Prediction (🔒 အတည်ပြုပြီး / မပြောင်းလဲတော့ပါ)
                 </span>
               ) : (
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                  Refining ({liveTickCount} Ticks)
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
+                  <Activity className="w-3 h-3 text-cyan-400 animate-pulse" />
+                  တိုက်ရိုက်အချက်အလက်များကို ခွဲခြမ်းစိတ်ဖြာနေဆဲ
                 </span>
               )}
             </h3>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Ensemble distribution of 4 statistical engines conditioned on today's live SET + Value.
+            MM2D V3 Joint SET &times; Value Trajectory Architecture conditioned on today's live market movement.
           </p>
         </div>
 
@@ -167,13 +167,15 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
             </div>
           )}
 
-          <button
-            id="btn-toggle-all-candidates"
-            onClick={toggleExpandAll}
-            className="text-xs px-2.5 py-1 rounded-lg bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
-          >
-            {allExpanded ? 'Collapse All' : 'Expand All'}
-          </button>
+          {shadowRecord.isFrozenAtLock && (
+            <button
+              id="btn-toggle-all-candidates"
+              onClick={toggleExpandAll}
+              className="text-xs px-2.5 py-1 rounded-lg bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
+            >
+              {allExpanded ? 'Collapse All' : 'Expand All'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -205,8 +207,33 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
         </div>
       </div>
 
-      {/* Top-10 Candidate List */}
-      <div className="divide-y divide-slate-800/60">
+      {/* Top-10 Candidate List or Pre-Lock Burmese Status */}
+      {!shadowRecord.isFrozenAtLock ? (
+        <div className="p-8 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto">
+            <Activity className="w-6 h-6 animate-pulse" />
+          </div>
+          <div className="space-y-1.5 max-w-md mx-auto">
+            <div className="text-base sm:text-lg font-bold text-cyan-300">
+              တိုက်ရိုက်အချက်အလက်များကို ခွဲခြမ်းစိတ်ဖြာနေပါသည်။
+            </div>
+            <div className="text-xs text-slate-300 leading-relaxed">
+              ခန့်မှန်းချက်ကို သတ်မှတ်ချိန်တွင် ပြသပါမည်။
+            </div>
+          </div>
+          <div className="inline-flex flex-wrap items-center justify-center gap-2 pt-2">
+            <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-mono font-bold bg-slate-900 text-slate-300 border border-slate-700">
+              <Clock className="w-3.5 h-3.5 text-cyan-400" />
+              <span>သတ်မှတ်ချိန်: {session === 'AM' ? '11:30 AM MMT (12:00 PM BKK)' : '03:30 PM MMT (04:00 PM BKK)'}</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-800/40">
+              <Activity className="w-3 h-3 text-cyan-400" />
+              <span>{liveTickCount} Ticks Analyzed</span>
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-800/60">
         {top10Candidates.map((candidate) => {
           const isExpanded = !!expandedCandidates[candidate.twod];
           const isHit = actual2D !== null && candidate.twod === actual2D;
@@ -412,7 +439,8 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
 
       {/* Auto-Tracked Settlement Evaluation Section (When Settled) */}
       {settlementComparison && (
@@ -552,6 +580,16 @@ export const V2Top10View: React.FC<V2Top10ViewProps> = ({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Locked Notice Banner */}
+      {shadowRecord.isFrozenAtLock && (
+        <div className="m-4 p-3 bg-amber-950/30 border border-amber-500/30 rounded-xl flex items-center gap-2.5 text-xs text-amber-200">
+          <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>
+            <b>🔒 အတည်ပြုပြီး / မပြောင်းလဲတော့ပါ</b> &bull; Final Lock At Cutoff Time.
+          </span>
         </div>
       )}
 

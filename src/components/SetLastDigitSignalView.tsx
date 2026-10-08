@@ -23,17 +23,20 @@ import { MarketCalendar } from '../core/market/marketCalendar';
 import { globalDatasetStorage } from '../core/storage/storageAbstraction';
 import { TimezoneContract } from '../core/market/timezoneUtils';
 import type { ServerSideSetLastDigitResult } from '../core/prediction/serverSideSetLastDigitCoordinator';
+import { LiveMarketSnapshot } from '../types/liveSource';
 
 interface SetLastDigitSignalViewProps {
   records: VerifiedMarketRecord[];
   onBack: () => void;
   currentTime?: Date | string;
+  liveSnapshot?: LiveMarketSnapshot | null;
 }
 
 export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
   records,
   onBack,
   currentTime,
+  liveSnapshot,
 }) => {
   // Resolve eligibility strictly according to SET Trading Calendar and session visibility rules
   const eligibility = useMemo(() => {
@@ -55,11 +58,29 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
     holidayName,
   } = eligibility;
 
-  // Retrieve eligible pre-lock live observations for today and eligible session (only if active)
+  // Ingest incoming live snapshot into global buffer if within active market session window
+  useEffect(() => {
+    if (liveSnapshot && targetDate && eligibleSession && liveSnapshot.date === targetDate) {
+      const openTime = eligibleSession === 'AM' ? '10:00:00' : '14:00:00';
+      const lockTime = eligibleSession === 'AM' ? '12:00:00' : '16:00:00';
+      if (liveSnapshot.time >= openTime && liveSnapshot.time <= lockTime) {
+        globalLiveObservationBuffer.ingestSnapshot(liveSnapshot, currentTime);
+      }
+    }
+  }, [liveSnapshot, targetDate, eligibleSession, currentTime]);
+
+  // Retrieve eligible pre-lock live observations for today and eligible session (reacts to live updates)
   const liveObservations = useMemo(() => {
     if (!targetDate || !eligibleSession) return [];
+    if (liveSnapshot && liveSnapshot.date === targetDate) {
+      const openTime = eligibleSession === 'AM' ? '10:00:00' : '14:00:00';
+      const lockTime = eligibleSession === 'AM' ? '12:00:00' : '16:00:00';
+      if (liveSnapshot.time >= openTime && liveSnapshot.time <= lockTime) {
+        globalLiveObservationBuffer.ingestSnapshot(liveSnapshot, currentTime);
+      }
+    }
     return globalLiveObservationBuffer.getObservations(eligibleSession, targetDate);
-  }, [eligibleSession, targetDate]);
+  }, [eligibleSession, targetDate, liveSnapshot, currentTime]);
 
   // Server-side SET Last Digit Signal state
   const [serverSignal, setServerSignal] = useState<ServerSideSetLastDigitResult | null>(null);
@@ -101,9 +122,20 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
     const isBeforeOpen = isToday && clock.timeStr < openTime;
     const isPastLock = (isToday && clock.timeStr >= lockTime) || (targetDate < clock.dateStr);
 
+    const latestLive = liveObservations.length > 0
+      ? liveObservations[liveObservations.length - 1].set
+      : (liveSnapshot && liveSnapshot.date === targetDate && typeof liveSnapshot.setNumeric === 'number' && liveSnapshot.setNumeric >= 100
+          ? liveSnapshot.setNumeric
+          : null);
+    const observationCount = Math.max(liveObservations.length, latestLive !== null ? 1 : 0);
+
     // If authoritative server signal is available from Cloudflare Worker, consume it directly
     if (serverSignal) {
-      const candidates = serverSignal.candidates || [];
+      // If serverSignal is locked, use its frozen candidates.
+      // If serverSignal is not locked, strictly output [] candidates before lock!
+      const candidates = serverSignal.isLocked ? (serverSignal.candidates || []) : [];
+      const liveSet = serverSignal.liveSetObserved !== null ? serverSignal.liveSetObserved : latestLive;
+      const obsCount = Math.max(serverSignal.liveObservationCount || 0, observationCount);
       return {
         status: serverSignal.status,
         isLocked: serverSignal.isLocked,
@@ -113,11 +145,11 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
           rank: idx + 1,
         })),
         candidateCount: candidates.length,
-        liveSetObserved: serverSignal.liveSetObserved,
-        liveObservationCount: serverSignal.liveObservationCount,
+        liveSetObserved: liveSet,
+        liveObservationCount: obsCount,
         distribution: Array.from({ length: 10 }, (_, i) => ({
           digit: String(i),
-          probability: candidates.includes(String(i)) ? 0.25 : 0.05,
+          probability: candidates.includes(String(i)) ? 0.25 : 0.1,
         })),
         evidenceSummary: {
           confidenceLevel: 'HIGH',
@@ -143,8 +175,6 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
       };
     }
 
-    const latestLive = liveObservations.length > 0 ? liveObservations[liveObservations.length - 1].set : null;
-
     if (!isPastLock) {
       // Market open -> lock boundary: "LIVE_ANALYSIS"
       // IMPORTANT: Strictly NO candidate prediction digits displayed before lock!
@@ -154,7 +184,7 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
         candidates: [],
         candidateCount: 0,
         liveSetObserved: latestLive,
-        liveObservationCount: liveObservations.length,
+        liveObservationCount: observationCount,
         distribution: Array.from({ length: 10 }, (_, i) => ({ digit: String(i), probability: 0.1 })),
         evidenceSummary: {
           confidenceLevel: 'BALANCED',
@@ -177,12 +207,12 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
       isLocked: true,
       candidates: localPred.candidates,
       candidateCount: localPred.candidateCount,
-      liveSetObserved: localPred.liveSetObserved,
-      liveObservationCount: localPred.liveObservationCount,
+      liveSetObserved: localPred.liveSetObserved !== null ? localPred.liveSetObserved : latestLive,
+      liveObservationCount: Math.max(localPred.liveObservationCount, observationCount),
       distribution: localPred.distribution,
       evidenceSummary: localPred.evidenceSummary,
     };
-  }, [targetDate, eligibleSession, serverSignal, currentTime, liveObservations, records, lockTimeString]);
+  }, [targetDate, eligibleSession, serverSignal, currentTime, liveObservations, records, lockTimeString, liveSnapshot]);
 
   const [observationSummary, setObservationSummary] = useState<SetLastDigitObservationSummary>(() =>
     globalSetLastDigitObservationTracker.getSummary()
@@ -354,23 +384,18 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
               <div>
                 {signalResult.isLocked || (signalResult.status as string) === 'FINAL_SIGNAL' || (signalResult.status as string) === 'LOCKED' ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                    <Lock className="w-3 h-3" />
-                    FINAL SIGNAL ({lockTimeString})
+                    <Lock className="w-3 h-3 text-amber-400" />
+                    ခန့်မှန်းချက် အတည်ပြုပြီး (🔒 အတည်ပြုပြီး / မပြောင်းလဲတော့ပါ)
                   </span>
                 ) : signalResult.status === 'WAITING_FOR_MARKET_OPEN' || (signalResult.status as string) === 'MARKET_NOT_OPEN' ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
                     <Clock className="w-3 h-3" />
                     WAITING FOR MARKET OPEN
                   </span>
-                ) : (signalResult.status as string) === 'WAITING_FOR_LIVE_SET' || (signalResult.status as string) === 'INSUFFICIENT_DATA' ? (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/25">
-                    <Activity className="w-3 h-3 text-amber-400" />
-                    WAITING FOR LIVE SET
-                  </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
                     <Activity className="w-3 h-3 text-cyan-400 animate-pulse" />
-                    LIVE SIGNAL
+                    တိုက်ရိုက်အချက်အလက်များကို ခွဲခြမ်းစိတ်ဖြာနေဆဲ
                   </span>
                 )}
               </div>
@@ -382,18 +407,18 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-indigo-400" />
                   <span>
-                    SET Last Decimal Digit Candidates
-                    {signalResult.candidateCount > 0
+                    SET နောက်ဆုံးဒဿမဂဏန်း ခန့်မှန်းချက်
+                    {signalResult.isLocked && signalResult.candidateCount > 0
                       ? ` (${signalResult.candidateCount} Candidate${signalResult.candidateCount > 1 ? 's' : ''})`
                       : ''}
                   </span>
                 </div>
                 <span className="text-[11px] text-slate-400 font-mono">
-                  Rule: 1–3 Candidates Max
+                  {signalResult.isLocked ? 'Rule: 1–3 Candidates Max' : `သတ်မှတ်ချိန်: ${lockTimeString} BKK`}
                 </span>
               </div>
 
-              {signalResult.candidateCount === 0 || signalResult.candidates.length === 0 ? (
+              {!signalResult.isLocked || signalResult.candidateCount === 0 || signalResult.candidates.length === 0 ? (
                 <div className="bg-slate-900/80 border border-slate-800/90 rounded-xl p-8 flex flex-col items-center justify-center text-center space-y-3">
                   {signalResult.status === 'WAITING_FOR_MARKET_OPEN' || (signalResult.status as string) === 'MARKET_NOT_OPEN' ? (
                     <>
@@ -414,13 +439,17 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
                       <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center">
                         <Activity className="w-6 h-6 animate-pulse" />
                       </div>
-                      <div className="space-y-1">
-                        <div className="text-sm font-black font-mono tracking-wider text-cyan-300 uppercase">
-                          WAITING FOR LIVE SET
+                      <div className="space-y-1.5 max-w-md">
+                        <div className="text-base sm:text-lg font-bold text-cyan-300">
+                          တိုက်ရိုက်အချက်အလက်များကို ခွဲခြမ်းစိတ်ဖြာနေပါသည်။
                         </div>
-                        <p className="text-xs text-slate-400 max-w-sm">
-                          Live SET အချက်အလက် စတင်ရရှိချိန်မှသာ အချက်ပြဂဏန်းများကို တိကျစွာ ခွဲခြမ်းစိတ်ဖြာ တွက်ချက်မည်ဖြစ်ပါသည်။
-                        </p>
+                        <div className="text-xs text-slate-300 leading-relaxed">
+                          ခန့်မှန်းချက်ကို သတ်မှတ်ချိန်တွင် ပြသပါမည်။
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700 mt-2">
+                          <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>သတ်မှတ်ချိန်: {eligibleSession === 'AM' ? '11:30 AM MMT (12:00 PM BKK)' : '03:30 PM MMT (04:00 PM BKK)'}</span>
+                        </div>
                       </div>
                     </>
                   )}
@@ -514,52 +543,54 @@ export const SetLastDigitSignalView: React.FC<SetLastDigitSignalViewProps> = ({
             </div>
           </div>
 
-          {/* Complete Digits 0-9 Probability Distribution */}
-          <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Full Decimal Digit Probability Spectrum (၀ မှ ၉)
+          {/* Complete Digits 0-9 Probability Distribution (Rendered only at or after final lock) */}
+          {signalResult.isLocked && signalResult.distribution && signalResult.distribution.length > 0 && (
+            <div className="bg-[#0B0E17]/90 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  Full Decimal Digit Probability Spectrum (၀ မှ ၉)
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono">
+                  {signalResult.evidenceSummary.confidenceLevel} Confidence
+                </div>
               </div>
-              <div className="text-[11px] text-slate-400 font-mono">
-                {signalResult.evidenceSummary.confidenceLevel} Confidence
+
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                {signalResult.distribution.map((item) => {
+                  const isSelected = signalResult.candidates.some((c) => c.digit === item.digit);
+                  return (
+                    <div
+                      key={item.digit}
+                      className={`p-2.5 rounded-xl border transition-all ${
+                        isSelected
+                          ? 'bg-indigo-950/40 border-indigo-500/50 shadow-md'
+                          : 'bg-slate-900/50 border-slate-800/70'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className={`font-bold ${isSelected ? 'text-indigo-300' : 'text-slate-300'}`}>
+                          Digit {item.digit}
+                        </span>
+                        <span className={isSelected ? 'text-indigo-400 font-bold' : 'text-slate-500'}>
+                          {(item.probability * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-1 mt-1.5 overflow-hidden">
+                        <div
+                          className={`h-1 rounded-full ${isSelected ? 'bg-indigo-400' : 'bg-slate-600'}`}
+                          style={{ width: `${Math.min(100, Math.max(3, item.probability * 100))}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-              {signalResult.distribution.map((item) => {
-                const isSelected = signalResult.candidates.some((c) => c.digit === item.digit);
-                return (
-                  <div
-                    key={item.digit}
-                    className={`p-2.5 rounded-xl border transition-all ${
-                      isSelected
-                        ? 'bg-indigo-950/40 border-indigo-500/50 shadow-md'
-                        : 'bg-slate-900/50 border-slate-800/70'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-xs font-mono">
-                      <span className={`font-bold ${isSelected ? 'text-indigo-300' : 'text-slate-300'}`}>
-                        Digit {item.digit}
-                      </span>
-                      <span className={isSelected ? 'text-indigo-400 font-bold' : 'text-slate-500'}>
-                        {(item.probability * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-slate-800 rounded-full h-1 mt-1.5 overflow-hidden">
-                      <div
-                        className={`h-1 rounded-full ${isSelected ? 'bg-indigo-400' : 'bg-slate-600'}`}
-                        style={{ width: `${Math.min(100, Math.max(3, item.probability * 100))}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+              <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                {signalResult.evidenceSummary.rationale}
+              </p>
             </div>
-
-            <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
-              {signalResult.evidenceSummary.rationale}
-            </p>
-          </div>
+          )}
         </>
       )}
 

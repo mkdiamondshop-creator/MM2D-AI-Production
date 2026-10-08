@@ -305,10 +305,12 @@ async function runStep52Tests() {
   // Must render Final Prediction (Locked) conditionally on isFrozenAtLock
   assert(v2ViewContent.includes('shadowRecord.isFrozenAtLock ?'),
          'V2Top10View gates "Final Prediction (Locked)" strictly on isFrozenAtLock');
-  assert(v2ViewContent.includes('Early Prediction'),
-         'V2Top10View displays "Early Prediction" when pre-lock tick count <= 1');
-  assert(v2ViewContent.includes('Refining ('),
-         'V2Top10View displays "Refining" when pre-lock tick count > 1');
+  // Pre-lock Candidate Hiding & Burmese Analysis status audit:
+  // Must render candidates strictly on isFrozenAtLock, avoiding "Early Prediction" terminology
+  assert(v2ViewContent.includes('!shadowRecord.isFrozenAtLock ?'),
+         'V2Top10View gates candidate numbers strictly until lock is reached');
+  assert(!v2ViewContent.includes('Early Prediction'),
+         'V2Top10View strictly purges "Early Prediction" wording');
 
   // Empty state must not say "Final Prediction"
   assert(!v2ViewContent.includes('AUTO_WEIGHTED_V2 Final Prediction'),
