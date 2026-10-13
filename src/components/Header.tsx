@@ -60,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
               </h1>
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex items-center gap-1">
                 <Zap className="w-2.5 h-2.5" />
-                Live V2
+                MM2D V3
               </span>
             </div>
             <p className="text-[11px] text-slate-400 font-medium">

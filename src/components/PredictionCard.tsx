@@ -68,7 +68,7 @@ export const PredictionCard: React.FC<PredictionCardProps> = ({
             </span>
           </div>
           <div className="text-xs text-slate-400 mt-0.5">
-            Auto-Weighted V2 Ensemble Model
+            MM2D V3 Joint Trajectory Engine
           </div>
         </div>
 
@@ -214,7 +214,7 @@ export const PredictionCard: React.FC<PredictionCardProps> = ({
           {top5.length > 0 && (
             <div className="pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-400">Top-5 Ensemble:</span>
+                <span className="text-xs font-semibold text-slate-400">Top-5 V3 Candidates:</span>
                 <div className="flex items-center gap-1.5">
                   {top5.map((num, idx) => (
                     <span

@@ -34,7 +34,7 @@ export const Top10HitMissCard: React.FC<Top10HitMissCardProps> = ({ summary }) =
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              တရားဝင် ၂ လုံး ထွက်ဂဏန်းနှင့် Final AUTO_WEIGHTED_V2 Top 10 ကိုက်ညီမှု စောင့်ကြည့်ချက်
+              တရားဝင် ၂ လုံး ထွက်ဂဏန်းနှင့် Final MM2D V3 Top 10 ကိုက်ညီမှု စောင့်ကြည့်ချက်
             </p>
           </div>
         </div>
@@ -235,7 +235,7 @@ export const Top10HitMissCard: React.FC<Top10HitMissCardProps> = ({ summary }) =
       {/* Footer Info */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-500 gap-2 border-t border-slate-800/80 pt-3">
         <span>
-          Rule: Official 2D in AUTO_WEIGHTED_V2 Top 10 = HIT, otherwise MISS.
+          Rule: Official 2D in MM2D V3 Top 10 = HIT, otherwise MISS.
         </span>
         <span className="font-mono text-cyan-400/80">
           5 Trading Days • Max 10 Sessions Window
